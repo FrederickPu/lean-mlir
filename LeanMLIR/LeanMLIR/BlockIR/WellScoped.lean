@@ -430,7 +430,7 @@ theorem Block.eval_call_ws (hws : Block.WellScoped P) (state : opAlg.State)
   simp [ht, hj]
 
 /-- End of a block: fall through, returning `[novalue]`. -/
-theorem Block.eval_nil (state : opAlg.State) (env : Std.HashMap String opAlg.Data)
+@[block_eval] theorem Block.eval_nil (state : opAlg.State) (env : Std.HashMap String opAlg.Data)
     (callStack : List Nat) {noargs : List opAlg.Data} (hno : noargs = []) :
     Block.eval P state env callStack ⟨[], []⟩ noargs =
       some ⟨callStack.dropLast, [opAlg.novalue], state⟩ := by
@@ -451,7 +451,7 @@ theorem Block.fn_unfold (i : Nat) (args : List opAlg.Data) (s : opAlg.State) :
   rw [Block.eval_args]
   rcases bargs.zip? args <;> rfl
 
-@[simp] theorem dropFromLast_singleton (i : Nat) : [i].dropFromLast i = [] := by
+@[simp, block_eval] theorem dropFromLast_singleton (i : Nat) : [i].dropFromLast i = [] := by
   simpa using dropFromLast_append_self [] i
 
 
@@ -463,5 +463,14 @@ theorem Block.fn_unfold_lit (i : Nat) (args : List opAlg.Data) (s : opAlg.State)
         (Block.eval P s (bindPairs ∅ ps) [OfNat.ofNat i] ⟨[], b.instructions⟩ []).bind fun r =>
           if r.callStack = [] then some (r.retVals, r.state) else none :=
   Block.fn_unfold P _ args s
+
+
+/-- Bind a block's arguments (only for blocks that have some, so `simp` terminates). -/
+@[block_eval] theorem Block.eval_bind_args (s : opAlg.State) (e : Std.HashMap String opAlg.Data)
+    (cs : List Nat) (a : String) (as : List String) (instrs : List opAlg.Instruction)
+    (vs : List opAlg.Data) :
+    Block.eval P s e cs ⟨a :: as, instrs⟩ vs =
+      ((a :: as).zip? vs).bind fun ps => Block.eval P s (bindPairs e ps) cs ⟨[], instrs⟩ [] :=
+  Block.eval_args P s e cs _ instrs vs
 
 end OpAlgebra

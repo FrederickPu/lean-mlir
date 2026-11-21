@@ -2,6 +2,7 @@
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import LeanMLIR.BlockIR.Core
+import LeanMLIR.BlockIR.SimpSet
 
 /-!
 # Reasoning principles for `Block.eval`
@@ -90,9 +91,9 @@ theorem Block.eval_of_noCall (blocks : List (Block opAlg)) (state : opAlg.State)
 
 /-- `simp` forms of `bindPairs_nil`/`bindPairs_cons` that also fire when the list's element
 type has been unfolded (e.g. to the dialect's `Data`). -/
-@[simp] theorem bindPairs_nil' (env : Std.HashMap String opAlg.Data) :
+@[simp, block_eval] theorem bindPairs_nil' (env : Std.HashMap String opAlg.Data) :
     bindPairs env (no_index []) = env := rfl
-@[simp] theorem bindPairs_cons' (env : Std.HashMap String opAlg.Data) (p) (ps) :
+@[simp, block_eval] theorem bindPairs_cons' (env : Std.HashMap String opAlg.Data) (p) (ps) :
     bindPairs env (no_index (p :: ps)) = bindPairs (env.insert p.1 p.2) ps := rfl
 
 theorem bindPairs_getElem?_of_not_mem {env : Std.HashMap String opAlg.Data} {ps} {k : String}
@@ -221,7 +222,7 @@ theorem Block.eval_args (blocks : List (Block opAlg)) (state : opAlg.State)
 /-- **`call`**: run the callee with the caller's environment and the callee's label
 pushed on the call stack. If the callee's `ret` unwinds past us, propagate; otherwise
 bind its results and continue. -/
-theorem Block.eval_call (blocks : List (Block opAlg)) (state : opAlg.State)
+@[block_eval] theorem Block.eval_call (blocks : List (Block opAlg)) (state : opAlg.State)
     (env : Std.HashMap String opAlg.Data) (callStack : List Nat)
     (regs : List String) (target : opAlg.Arg) (cargs : List opAlg.Arg)
     (rest : List opAlg.Instruction) {noargs : List opAlg.Data} (hno : noargs = []) :
@@ -261,7 +262,7 @@ theorem Block.eval_call (blocks : List (Block opAlg)) (state : opAlg.State)
 
 /-- **`ret`**: return the arguments, unwinding the call stack to the latest call of
 the target block. -/
-theorem Block.eval_ret (blocks : List (Block opAlg)) (state : opAlg.State)
+@[block_eval] theorem Block.eval_ret (blocks : List (Block opAlg)) (state : opAlg.State)
     (env : Std.HashMap String opAlg.Data) (callStack : List Nat)
     (target : opAlg.Arg) (rargs : List opAlg.Arg) (rest : List opAlg.Instruction)
     {noargs : List opAlg.Data} (hno : noargs = []) :
@@ -285,13 +286,13 @@ theorem Block.eval_ret (blocks : List (Block opAlg)) (state : opAlg.State)
   simp [hm, ht, hi, afterPrefix]
 
 /-- Returning from a block that was just called restores the caller's call stack. -/
-@[simp] theorem dropFromLast_append_self (cs : List Nat) (i : Nat) :
+@[simp, block_eval] theorem dropFromLast_append_self (cs : List Nat) (i : Nat) :
     (cs ++ [i]).dropFromLast i = cs := by
   simp [List.dropFromLast, List.findLastIdx?, List.findIdx?_cons]
 
 
 /-- **One primop**: evaluate it, bind its results, and continue. -/
-theorem Block.eval_prim (blocks : List (Block opAlg)) (state : opAlg.State)
+@[block_eval] theorem Block.eval_prim (blocks : List (Block opAlg)) (state : opAlg.State)
     (env : Std.HashMap String opAlg.Data) (callStack : List Nat)
     (regs : List String) (p : opAlg.PrimOp) (pargs : List opAlg.Arg)
     (rest : List opAlg.Instruction) {noargs : List opAlg.Data} (hno : noargs = []) :

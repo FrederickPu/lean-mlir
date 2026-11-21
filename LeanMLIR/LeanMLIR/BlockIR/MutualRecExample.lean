@@ -128,18 +128,12 @@ def F (n : Nat) : Option Nat := (Block.fn prog 0 [nat' n] ()).bind fun r => out1
 /-- `g`, as computed by the BlockIR program. -/
 def G (n : Nat) : Option Nat := (Block.fn prog 3 [nat' n] ()).bind fun r => out1 r.1
 
-set_option maxHeartbeats 400000 in
+/-! ## Equation lemmas, stated like `f`'s and `g`'s definitions -/
+
 theorem F_zero : F 0 = some 0 := by
-  block_unfold [F, nat', prim, out1] using prog_ws
+  simp only [block_eval, F, nat', prim, out1]
 
-set_option maxHeartbeats 400000 in
 theorem G_zero : G 0 = some 1 := by
-  block_unfold [G, nat', prim, out1] using prog_ws
-
-set_option maxHeartbeats 1000000 in
-theorem F_succ (n : Nat) : F (n + 1) = (G n).bind fun a => some (3 * a + (n + 1) * (n + 1) + 7) := by
-  block_unfold [F, G, nat', prim, out1] using prog_ws
-  trace_state
-  sorry
+  simp only [block_eval, G, nat', prim, out1]
 
 end BlockIR.MutualRecExample

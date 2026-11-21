@@ -81,7 +81,7 @@ def encode : {ts : List d.Ty} → HVector toType ts → List (Data d)
 def decode : (ts : List d.Ty) → List (Data d) → Option (HVector toType ts)
   | [], [] => some .nil
   | t :: ts, ⟨t', x⟩ :: ds =>
-    if h : t' = t then (decode ts ds).map (.cons (h ▸ x)) else none
+    if h : t' = t then (decode ts ds).map (.cons (cast (congrArg toType h) x)) else none
   | _, _ => none
 
 /-- The (only) region argument vector of an op without regions. -/
@@ -93,7 +93,8 @@ def ofLabel (i : Nat) : Data d := ⟨DialectLabels.labelTy, DialectLabels.ofIdx 
 
 /-- Read a value as a label. -/
 def toLabel? : Data d → Option Nat
-  | ⟨t, x⟩ => if h : t = DialectLabels.labelTy then some (DialectLabels.toIdx (h ▸ x)) else none
+  | ⟨t, x⟩ => if h : t = DialectLabels.labelTy then
+      some (DialectLabels.toIdx (cast (congrArg toType h) x)) else none
 
 variable (d) in
 /-- The BlockIR operator algebra of dialect `d`. Ops with regions have no primop
