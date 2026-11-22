@@ -430,7 +430,7 @@ theorem Block.eval_call_ws (hws : Block.WellScoped P) (state : opAlg.State)
   simp [ht, hj]
 
 /-- End of a block: fall through, returning `[novalue]`. -/
-@[block_eval] theorem Block.eval_nil (state : opAlg.State) (env : Std.HashMap String opAlg.Data)
+@[block_steps] theorem Block.eval_nil (state : opAlg.State) (env : Std.HashMap String opAlg.Data)
     (callStack : List Nat) {noargs : List opAlg.Data} (hno : noargs = []) :
     Block.eval P state env callStack ⟨[], []⟩ noargs =
       some ⟨callStack.dropLast, [opAlg.novalue], state⟩ := by
@@ -466,7 +466,7 @@ theorem Block.fn_unfold_lit (i : Nat) (args : List opAlg.Data) (s : opAlg.State)
 
 
 /-- Bind a block's arguments (only for blocks that have some, so `simp` terminates). -/
-@[block_eval] theorem Block.eval_bind_args (s : opAlg.State) (e : Std.HashMap String opAlg.Data)
+@[block_steps] theorem Block.eval_bind_args (s : opAlg.State) (e : Std.HashMap String opAlg.Data)
     (cs : List Nat) (a : String) (as : List String) (instrs : List opAlg.Instruction)
     (vs : List opAlg.Data) :
     Block.eval P s e cs ⟨a :: as, instrs⟩ vs =

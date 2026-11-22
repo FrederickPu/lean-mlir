@@ -1,5 +1,5 @@
 import LeanMLIR.BlockIR.WellScoped
-import LeanMLIR.BlockIR.Tactic
+import LeanMLIR.BlockIR.Program
 
 /-!
 # Example: proving mutually recursive BlockIR functions correct
@@ -102,7 +102,7 @@ def recBlock (self other : Nat) (body : List I) : Block (alg Ar) :=
     [⟨[], .ret (label self), [.ofVar "res"]⟩])⟩
 
 /-- Blocks: `0 = f`, `1 = f`'s base, `2 = f`'s recursion, `3 = g`, `4`, `5` likewise. -/
-abbrev prog : List (Block (alg Ar)) :=
+def prog : List (Block (alg Ar)) :=
   [dispatch 0 1 2, base 1 0, recBlock 2 3 fStretch,
    dispatch 3 4 5, base 4 1, recBlock 5 0 gStretch]
 
@@ -123,17 +123,45 @@ def out1 : List (Data Ar) → Option Nat
   | [⟨.nat, x⟩] => some x
   | _ => none
 
+/-- The initial state (this dialect has no effects). -/
+def s₀ : (alg Ar).State := ()
+
 /-- `f`, as computed by the BlockIR program. -/
-def F (n : Nat) : Option Nat := (Block.fn prog 0 [nat' n] ()).bind fun r => out1 r.1
+def F (n : Nat) : Option Nat := (Block.fn prog 0 [nat' n] s₀).bind fun r => out1 r.1
 /-- `g`, as computed by the BlockIR program. -/
-def G (n : Nat) : Option Nat := (Block.fn prog 3 [nat' n] ()).bind fun r => out1 r.1
+def G (n : Nat) : Option Nat := (Block.fn prog 3 [nat' n] s₀).bind fun r => out1 r.1
+
+
+attribute [block_program] prog
+
 
 /-! ## Equation lemmas, stated like `f`'s and `g`'s definitions -/
 
 theorem F_zero : F 0 = some 0 := by
-  simp only [block_eval, F, nat', prim, out1]
+  simp only [F, nat', out1, block_eval, Block.fn_step prog 0, Block.fn_step prog 1]
 
 theorem G_zero : G 0 = some 1 := by
-  simp only [block_eval, G, nat', prim, out1]
+  simp only [G, nat', out1, block_eval, Block.fn_step prog 3, Block.fn_step prog 4]
+
+theorem F_succ (n : Nat) :
+    F (n + 1) = (G n).bind fun a => some (3 * a + (n + 1) * (n + 1) + 7) := by
+  simp only [F, G, nat', out1, block_eval, Block.fn_step prog 0, Block.fn_step prog 2]
+  generalize Block.fn prog 3 _ s₀ = o
+  rcases o with _ | ⟨_ | ⟨⟨⟨⟩, a⟩, _ | _⟩, s'⟩ <;> simp only [block_eval]
+
+theorem G_succ (n : Nat) :
+    G (n + 1) = (F n).bind fun a => some (2 * a + (n + 1) + 5) := by
+  simp only [F, G, nat', out1, block_eval, Block.fn_step prog 3, Block.fn_step prog 5]
+  generalize Block.fn prog 0 _ s₀ = o
+  rcases o with _ | ⟨_ | ⟨⟨⟨⟩, a⟩, _ | _⟩, s'⟩ <;> simp only [block_eval]
+
+/-! ## The proof: the same shape as a proof about `f` and `g` -/
+
+/-- The program computes `f` and `g`. -/
+theorem F_G_correct : ∀ n, F n = some (f n) ∧ G n = some (g n)
+  | 0 => ⟨by simp [F_zero, f], by simp [G_zero, g]⟩
+  | n + 1 => by
+    obtain ⟨hF, hG⟩ := F_G_correct n
+    exact ⟨by simp [F_succ, hG, f], by simp [G_succ, hF, g]⟩
 
 end BlockIR.MutualRecExample

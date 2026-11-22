@@ -222,7 +222,7 @@ theorem Block.eval_args (blocks : List (Block opAlg)) (state : opAlg.State)
 /-- **`call`**: run the callee with the caller's environment and the callee's label
 pushed on the call stack. If the callee's `ret` unwinds past us, propagate; otherwise
 bind its results and continue. -/
-@[block_eval] theorem Block.eval_call (blocks : List (Block opAlg)) (state : opAlg.State)
+@[block_steps] theorem Block.eval_call (blocks : List (Block opAlg)) (state : opAlg.State)
     (env : Std.HashMap String opAlg.Data) (callStack : List Nat)
     (regs : List String) (target : opAlg.Arg) (cargs : List opAlg.Arg)
     (rest : List opAlg.Instruction) {noargs : List opAlg.Data} (hno : noargs = []) :
@@ -262,7 +262,7 @@ bind its results and continue. -/
 
 /-- **`ret`**: return the arguments, unwinding the call stack to the latest call of
 the target block. -/
-@[block_eval] theorem Block.eval_ret (blocks : List (Block opAlg)) (state : opAlg.State)
+@[block_steps] theorem Block.eval_ret (blocks : List (Block opAlg)) (state : opAlg.State)
     (env : Std.HashMap String opAlg.Data) (callStack : List Nat)
     (target : opAlg.Arg) (rargs : List opAlg.Arg) (rest : List opAlg.Instruction)
     {noargs : List opAlg.Data} (hno : noargs = []) :
@@ -292,7 +292,7 @@ the target block. -/
 
 
 /-- **One primop**: evaluate it, bind its results, and continue. -/
-@[block_eval] theorem Block.eval_prim (blocks : List (Block opAlg)) (state : opAlg.State)
+theorem Block.eval_prim (blocks : List (Block opAlg)) (state : opAlg.State)
     (env : Std.HashMap String opAlg.Data) (callStack : List Nat)
     (regs : List String) (p : opAlg.PrimOp) (pargs : List opAlg.Arg)
     (rest : List opAlg.Instruction) {noargs : List opAlg.Data} (hno : noargs = []) :

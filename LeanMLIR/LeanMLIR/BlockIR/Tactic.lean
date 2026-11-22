@@ -148,7 +148,7 @@ dsimproc [block_eval] reduceListGetElem? (@GetElem?.getElem? (List _) Nat _ _ _ 
   let elemTy := args[2]!
   let rec walk (l : Expr) : Nat → MetaM (Option Expr)
     | k => do
-      let l ← whnfR l
+      let l ← whnfD l
       if l.isAppOfArity ``List.cons 3 then
         if k == 0 then return some (← mkAppOptM ``Option.some #[some elemTy, some l.appFn!.appArg!])
         else walk l.appArg! (k - 1)
@@ -186,7 +186,7 @@ dsimproc [block_eval] reduceBlockInstrs (OpAlgebra.Block.instructions _) := fun 
 open Lean Meta in
 /-- Unfold `Block.fn P i args s` when the block index `i` is a numeral (so a call is
 unfolded once its target is known, and not before). -/
-simproc [block_eval] unfoldBlockFn (@OpAlgebra.Block.fn _ _ _ _ _) := fun e => do
+simproc_decl unfoldBlockFn (@OpAlgebra.Block.fn _ _ _ _ _) := fun e => do
   let args := e.getAppArgs
   unless args.size == 5 do return .continue
   let some _ := (← instantiateMVars args[2]!).nat? | return .continue
@@ -244,4 +244,4 @@ attribute [block_eval] List.mapM_cons List.mapM_nil OpAlgebra.Arg.instantiate
   ne_eq not_true_eq_false not_false_eq_true Nat.zero_add Nat.add_sub_cancel Nat.add_one_sub_one
   Nat.one_ne_zero Nat.add_one_ne_zero Nat.succ_ne_zero
 
-attribute [block_eval] String.reduceBEq Nat.reduceEqDiff Nat.reduceBEq reduceIte
+attribute [block_eval] String.reduceBEq String.reduceEq Nat.reduceEqDiff Nat.reduceBEq reduceIte

@@ -13,3 +13,8 @@ for a recursive definition: `simp only [block_eval]` steps a BlockIR program the
 
 /-- Reduction rules for `Block.eval` (and `Block.fn`). -/
 register_simp_attr block_eval
+
+/-- The step rules of `Block.eval` (one primop, `call`, `ret`, end of block, binding
+block arguments). Kept apart from the normalization in `block_eval`, so a tactic can
+take exactly one step. -/
+register_simp_attr block_steps
