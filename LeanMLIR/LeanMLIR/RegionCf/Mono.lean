@@ -1,7 +1,7 @@
 /-
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
-import LeanMLIR.RegionCF.Dialect
+import LeanMLIR.RegionCf.Dialect
 
 /-!
 # Every program is monotone in its functions
@@ -18,7 +18,7 @@ open Ctxt (Var Valuation)
 open TyDenote (toType)
 open Lean.Order
 
-namespace RegionCF
+namespace RegionCfFunctor
 
 /-! ## The order -/
 
@@ -167,7 +167,7 @@ theorem HVLe.append : {as bs : List Ty} → {xs xs' : HVector toType as} →
 
 theorem HVLe.revAux : {as bs : List Ty} → {xs xs' : HVector toType as} →
     {ys ys' : HVector toType bs} → HVLe xs xs' → HVLe ys ys' →
-      HVLe (RegionCF.revAux xs ys) (RegionCF.revAux xs' ys')
+      HVLe (RegionCfFunctor.revAux xs ys) (RegionCfFunctor.revAux xs' ys')
   | [], _, .nil, .nil, _, _, _, h => h
   | a :: as, bs, .cons _ _, .cons _ _, _, _, .cons h hs, h' =>
     HVLe.revAux (as := as) (bs := a :: bs) hs (.cons h h')
@@ -349,4 +349,4 @@ theorem funcsFix_apply (sigs : List (Nat × Nat))
       bodies sigs (funcsFix fun T => bodies sigs T sigs rs) sigs rs i xs :=
   congrFun (congrFun (funcsFix_unfold (bodies_monotone sigs sigs rs hrs)) i) xs
 
-end RegionCF
+end RegionCfFunctor

@@ -3,7 +3,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import LeanMLIR.MLIRSyntax.EDSL2
 import LeanMLIR.MLIRSyntax.Transform.Utils
-import LeanMLIR.RegionCF.Dialect
+import LeanMLIR.RegionCf.Dialect
 
 /-!
 # Syntax for the `CF` dialect: `[cf| …]`
@@ -41,7 +41,7 @@ open Lean Qq
 open MLIR.AST
 open Ctxt (Var Valuation)
 
-namespace RegionCF
+namespace RegionCfFunctor
 
 deriving instance Lean.ToExpr for Ty
 deriving instance Lean.ToExpr for Op
@@ -87,7 +87,7 @@ def mkSigs : List Ty → ExceptM CF (List (Nat × Nat))
 /-- Parse an op; its regions are parsed as programs of their own. -/
 partial def mkExpr (Γ : Ctxt Ty) (opStx : MLIR.AST.Op 0) : ReaderM CF (Σ eff ty, Expr CF Γ eff ty) := do
   let _ : LeanMLIR.DialectParse CF 0 :=
-    { mkTy := RegionCF.mkTy, isValidReturn := isValidReturn, mkExpr := fun Γ op => mkExpr Γ op }
+    { mkTy := RegionCfFunctor.mkTy, isValidReturn := isValidReturn, mkExpr := fun Γ op => mkExpr Γ op }
   let mkRegion : Region 0 → ExceptM CF (Σ Γ eff ty, Com CF Γ eff ty) := mkCom
   let args ← opStx.parseArgs Γ
   let resTys ← (opStx.res.mapM (TypedSSAVal.mkTy (d := CF)) : ExceptM CF _)
@@ -117,7 +117,7 @@ partial def mkExpr (Γ : Ctxt Ty) (opStx : MLIR.AST.Op 0) : ReaderM CF (Σ eff t
   | name => throw <| TransformError.unsupportedOp s!"Unknown op `{name}`"
 
 instance : LeanMLIR.DialectParse CF 0 where
-  mkTy := RegionCF.mkTy
+  mkTy := RegionCfFunctor.mkTy
   isValidReturn := isValidReturn
   mkExpr := mkExpr
 
@@ -151,4 +151,4 @@ elab "[cf_region| " reg:mlir_region "]" : term => do
   let ⟨_, eff, _, com⟩ ← SSA.elabIntoComObj reg CF
   (com.changeEffect (EffectKind.le_impure eff)).toExprM
 
-end RegionCF
+end RegionCfFunctor

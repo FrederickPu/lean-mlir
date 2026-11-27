@@ -1,9 +1,9 @@
 /-
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
-import LeanMLIR.RegionCF.Mono
-import LeanMLIR.RegionCF.Simp
-import LeanMLIR.RegionCF.Syntax
+import LeanMLIR.RegionCf.Mono
+import LeanMLIR.RegionCf.Simp
+import LeanMLIR.RegionCf.Syntax
 
 /-!
 # Nested loops
@@ -24,7 +24,7 @@ open Ctxt (Var Valuation)
 open TyDenote (toType)
 open MLIR.AST (Region)
 
-namespace RegionCF.Nested
+namespace RegionCfFunctor.Nested
 
 abbrev N := Ty.nat
 
@@ -175,4 +175,4 @@ theorem Mul'_eq (n m : Nat) : Mul' n m = some (n * m) := by
   cf_reduce
   simp
 
-end RegionCF.Nested
+end RegionCfFunctor.Nested

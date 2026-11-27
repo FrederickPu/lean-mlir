@@ -14,7 +14,7 @@ built by `::ᵥ`, one position at a time.
 open Ctxt (Var Valuation)
 open TyDenote (toType)
 
-namespace RegionCF
+namespace RegionCfFunctor
 
 variable {α : Type} {A : α → Type} {a t : α} {as : List α} {Γ : Ctxt α}
 
@@ -56,7 +56,7 @@ namespace CFReduce
 
 /-- The definitions `cf_reduce` unfolds. -/
 def unfoldable (n : Name) : Bool :=
-  (n.getRoot matches `Ctxt | `HVector | `Com | `Expr | `RegionCF | `EffectKind | `DialectDenote
+  (n.getRoot matches `Ctxt | `HVector | `Com | `Expr | `RegionCfFunctor | `EffectKind | `DialectDenote
     | `DialectSignature | `Signature) ||
   n matches ``Option.bind | ``Option.map | ``cast | ``Eq.mpr | ``Eq.mp | ``Fin.cast
     | ``Function.comp | `Option.instMonad | `Option.instFunctor
@@ -71,7 +71,7 @@ def keptClass (n : Name) : Bool :=
 /-- May `cf_reduce` unfold this constant? Everything but `if` (decided separately, by
 `decideIte`) and the fixpoints. -/
 def canUnfold (_ : Meta.Config) (c : ConstantInfo) : CoreM Bool :=
-  return !(c.name matches `RegionCF.funcsFix | `RegionCF.whileLoop | ``ite | ``dite)
+  return !(c.name matches `RegionCfFunctor.funcsFix | `RegionCfFunctor.whileLoop | ``ite | ``dite)
 
 /-- Is `e` Lean's arithmetic (`a + b`, …), which `cf_reduce` leaves as it is? -/
 def isArith (e : Expr) : MetaM Bool := do

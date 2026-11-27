@@ -2,7 +2,7 @@
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import LeanMLIR.Framework
-import LeanMLIR.RegionCF.Fix
+import LeanMLIR.RegionCf.Fix
 
 /-!
 # A control-flow dialect, all region ops
@@ -32,7 +32,7 @@ regions reversed (`rev`), and returns its regions' results reversed: a region's 
 open Ctxt (Var Valuation)
 open TyDenote (toType)
 
-namespace RegionCF
+namespace RegionCfFunctor
 
 inductive Ty
   | nat
@@ -198,4 +198,4 @@ local notation "Regs" op => HVector RegFn (DialectSignature.regSig (d := CF) op)
 
 end Denote
 
-end RegionCF
+end RegionCfFunctor

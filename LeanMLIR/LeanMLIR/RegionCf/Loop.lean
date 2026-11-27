@@ -1,9 +1,9 @@
 /-
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
-import LeanMLIR.RegionCF.Mono
-import LeanMLIR.RegionCF.Simp
-import LeanMLIR.RegionCF.Syntax
+import LeanMLIR.RegionCf.Mono
+import LeanMLIR.RegionCf.Simp
+import LeanMLIR.RegionCf.Syntax
 
 /-!
 # A loop, as a region op
@@ -23,7 +23,7 @@ computes the `n`-th Fibonacci number.
 open Ctxt (Var Valuation)
 open TyDenote (toType)
 
-namespace RegionCF.Loop
+namespace RegionCfFunctor.Loop
 
 open MLIR.AST (Region)
 
@@ -162,4 +162,4 @@ theorem spin_none (n : Nat) : spin.denote (Valuation.ofHVector ((n : Nat) ::ₕ 
   erw [h]
   rfl
 
-end RegionCF.Loop
+end RegionCfFunctor.Loop

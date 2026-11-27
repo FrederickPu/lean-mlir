@@ -6,7 +6,7 @@ import Std
 /-!
 # Loops and mutual recursion, as Lean functions
 
-The semantics of the control-flow region ops (`RegionCF.Dialect`):
+The semantics of the control-flow region ops (`LeanMLIR.RegionCf.Dialect`):
 
 * `whileLoop body x`: run `body` while it asks to continue. Defined by `partial_fixpoint`,
   so it is a Lean function (in `Option`: a loop that never stops has no value), with the
@@ -19,7 +19,7 @@ The semantics of the control-flow region ops (`RegionCF.Dialect`):
 
 open Lean.Order
 
-namespace RegionCF
+namespace RegionCfFunctor
 
 /-- `while`: run `body` on the state; it returns a flag (`0`: stop) and the new state. -/
 def whileLoop {α : Type} (body : α → Option (Nat × α)) (x : α) : Option α := do
@@ -85,4 +85,4 @@ theorem funcsFix_unfold {F : FnTable → FnTable} (h : monotone F) : funcsFix F 
   simp only [funcsFix, dif_pos h]
   exact fix_eq h
 
-end RegionCF
+end RegionCfFunctor

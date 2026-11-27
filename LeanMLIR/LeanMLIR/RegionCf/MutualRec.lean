@@ -1,9 +1,9 @@
 /-
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
-import LeanMLIR.RegionCF.Mono
-import LeanMLIR.RegionCF.Simp
-import LeanMLIR.RegionCF.Syntax
+import LeanMLIR.RegionCf.Mono
+import LeanMLIR.RegionCf.Simp
+import LeanMLIR.RegionCf.Syntax
 
 /-!
 # Mutually recursive functions, as a region op
@@ -19,7 +19,7 @@ funcs {
 open Ctxt (Var Valuation)
 open TyDenote (toType)
 
-namespace RegionCF.MutualRec
+namespace RegionCfFunctor.MutualRec
 
 open MLIR.AST (Region)
 
@@ -183,4 +183,4 @@ theorem F'_eq (n : Nat) : F' n = some (f n) := by
   erw [h]
   rfl
 
-end RegionCF.MutualRec
+end RegionCfFunctor.MutualRec

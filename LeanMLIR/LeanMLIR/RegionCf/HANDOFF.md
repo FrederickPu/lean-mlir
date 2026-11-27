@@ -1,4 +1,4 @@
-# RegionCF handoff
+# RegionCf handoff
 
 Structured control flow (if, loops, mutually recursive functions) built entirely from
 **region ops** in LeanMLIR's existing SSA framework (`Com`/`Expr`). There is no separate IR.
@@ -11,7 +11,7 @@ Status: everything below builds with no errors, warnings or `sorry`, on branch `
 
 ```sh
 cd LeanMLIR
-timeout 900 lake build LeanMLIR.RegionCF      # every module below (LeanMLIR/RegionCF.lean)
+timeout 900 lake build LeanMLIR.RegionCf      # every module below (LeanMLIR/RegionCfFunctor.lean)
 timeout 300 lake env lean --memory=4096 --threads=2 SomeScratch.lean
 ```
 
@@ -24,7 +24,7 @@ On a fresh checkout: no Mathlib binary cache exists for this nightly Mathlib rev
 If lake fails with `git exited with code 128` on a package, `git fetch origin <rev>` inside
 `.lake/packages/<pkg>` and check out the pinned revision by hand.
 
-Known failures in this package that predate RegionCF: `LeanMLIR.Dialects.LLVM.*` imports the
+Known failures in this package that predate RegionCf: `LeanMLIR.Dialects.LLVM.*` imports the
 `SSA` package (so `lake build` of the default target fails), and `LeanMLIR/Examples.lean`
 is marked out of date in its own header.
 
@@ -43,9 +43,9 @@ is marked out of date in its own header.
 | `FuncLoop.lean` | Worked example: `funcs { sq; sumsq }` where `sumsq`'s body is a loop that calls `sq` (passed in the loop state), proved equal to `1² + … + n²`. |
 
 `Loop.lean` also has `spin`, a loop that never breaks, and `spin_none` (by `whileLoop_diverges`).
-`LeanMLIR/RegionCF.lean` imports everything, and the root `LeanMLIR.lean` imports it.
+`LeanMLIR/RegionCfFunctor.lean` imports everything, and the root `LeanMLIR.lean` imports it.
 
-Shared code added or fixed for this (outside `RegionCF/`):
+Shared code added or fixed for this (outside `RegionCf/`):
 - `MLIRSyntax/Transform/Utils.lean`: `Op.mkRegions` and `Op.mkExprWithRegions`, the generic
   parsing of an op's regions (each by a given translator, usually `mkCom`, so regions are
   isolated from above). Before, `mkExprOf` panicked on ops with regions.
@@ -202,6 +202,6 @@ termination (`whileLoop_inv`) and divergence (`whileLoop_diverges`) lemmas, `cf_
    multi-result op whose result types differ does not typecheck in syntax unless the
    dialect reverses its results, as CF does (worth reporting upstream).
 4. **Upstreaming.** `Prod.foldToExpr` (bug fix) and `Op.mkRegions`/`Op.mkExprWithRegions`
-   (generic region parsing) are independent of RegionCF and could go to `main` on their own.
+   (generic region parsing) are independent of RegionCf and could go to `main` on their own.
 5. Old BlockIR files from an earlier design exist in the repo but are unused; don't confuse
    them with this work.

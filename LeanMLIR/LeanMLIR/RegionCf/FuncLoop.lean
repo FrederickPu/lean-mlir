@@ -1,9 +1,9 @@
 /-
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
-import LeanMLIR.RegionCF.Mono
-import LeanMLIR.RegionCF.Simp
-import LeanMLIR.RegionCF.Syntax
+import LeanMLIR.RegionCf.Mono
+import LeanMLIR.RegionCf.Simp
+import LeanMLIR.RegionCf.Syntax
 
 /-!
 # Loops and functions together
@@ -23,7 +23,7 @@ open Ctxt (Var Valuation)
 open TyDenote (toType)
 open MLIR.AST (Region)
 
-namespace RegionCF.FuncLoop
+namespace RegionCfFunctor.FuncLoop
 
 abbrev N := Ty.nat
 abbrev F := Ty.fn 1 1
@@ -173,4 +173,4 @@ theorem Sumsq'_eq (n : Nat) : Sumsq' n = some (sumsq n) := by
   erw [h]
   rfl
 
-end RegionCF.FuncLoop
+end RegionCfFunctor.FuncLoop
