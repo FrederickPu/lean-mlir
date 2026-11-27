@@ -62,8 +62,8 @@ def outerAst : Region 0 := [mlir_region| {
     "return"(%f, %i', %m', %acc') : (!nat, !nat, !nat, !nat) -> ()
 }]
 
-def inner := [cf_region| $(innerAst)]
-def outer := [cf_region| $(outerAst)]
+abbrev inner := [cf_region| $(innerAst)]
+abbrev outer := [cf_region| $(outerAst)]
 
 /-- `acc := 0; while outer; return acc` -/
 def prog := [cf| {
@@ -135,8 +135,8 @@ theorem outerStep_succ (i m acc : Nat) :
       some (true, (i : Nat) ::ₕ (m : Nat) ::ₕ (acc + m : Nat) ::ₕ .nil) := by
   unfold outerStep outer
   cf_reduce
-  -- the inner loop, run as far as `cf_reduce` goes: still `innerStep`, up to unfolding
-  erw [inner_loop m acc]
+  -- `cf_reduce` leaves the inner loop's body as it is: `innerStep`, so `inner_loop` rewrites
+  rw [inner_loop m acc]
   rfl
 
 /-- The outer loop's invariant: `m` is unchanged, and `acc + i * m` is the final value. -/
@@ -171,7 +171,7 @@ theorem outer_loop (i m acc : Nat) :
 theorem Mul'_eq (n m : Nat) : Mul' n m = some (n * m) := by
   unfold Mul' prog
   cf_reduce
-  erw [outer_loop n m 0]
+  rw [outer_loop n m 0]
   cf_reduce
   simp
 

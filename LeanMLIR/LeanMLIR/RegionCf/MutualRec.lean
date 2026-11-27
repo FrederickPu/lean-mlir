@@ -73,8 +73,8 @@ def gAst : Region 0 := [mlir_region| {
     "return"(%r) : (!nat) -> ()
 }]
 
-def fBody := [cf_region| $(fAst)]
-def gBody := [cf_region| $(gAst)]
+abbrev fBody := [cf_region| $(fAst)]
+abbrev gBody := [cf_region| $(gAst)]
 
 /-- `funcs { f; g } in f(n)` -/
 def prog := [cf| {
@@ -150,17 +150,17 @@ theorem gBody_succ (fv gv : FV) (n : Nat) :
 /-- The signatures of `f` and `g`: a number to a number. -/
 abbrev sigs : List (List Arith.Ty × List Arith.Ty) := [([.nat], [.nat]), ([.nat], [.nat])]
 
+/-- The bodies, as the `funcs` op's regions. -/
+abbrev bodyRegs : HVector (fun t : Ctxt (Ty Arith.Ty) × List (Ty Arith.Ty) =>
+    _root_.Com (RegionCf Arith) t.1 .impure t.2) (bodySig sigs sigs) :=
+  .cons fBody (.cons gBody .nil)
+
 /-- The bodies of `f` and `g`, as a table transformer. -/
 abbrev Fb : FnTable V → FnTable V := fun Tb =>
-  bodies sigs Tb sigs (Com.denote fBody ::ₕ Com.denote gBody ::ₕ .nil)
+  bodies sigs Tb sigs (HVector.denote (d := RegionCf Arith) bodyRegs)
 
 /-- The functions of the program. -/
 noncomputable abbrev T : FnTable V := funcsFix Fb
-
-/-- The bodies, as the `funcs` op's regions. -/
-def bodyRegs : HVector (fun t : Ctxt (Ty Arith.Ty) × List (Ty Arith.Ty) =>
-    _root_.Com (RegionCf Arith) t.1 .impure t.2) (bodySig sigs sigs) :=
-  .cons fBody (.cons gBody .nil)
 
 /-- The bodies are monotone: true of every program (`Com.denote_mono`). -/
 theorem hFb : RegsMono (HVector.denote (d := RegionCf Arith) bodyRegs) := HVector.denote_mono (d := Arith) bodyRegs
@@ -189,7 +189,7 @@ theorem F'_eq (n : Nat) : F' n = some (f n) := by
   unfold F' prog
   cf_reduce
   have h : funcsFix Fb 0 [⟨.nat, n⟩] = some [⟨.nat, f n⟩] := (table n).1
-  erw [h]
+  rw [h]
   rfl
 
 end RegionCfFunctor.MutualRec

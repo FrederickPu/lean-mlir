@@ -114,13 +114,32 @@ def decideIte (e : Expr) : MetaM (Option Expr) := do
     return some (mkAppN (if isDite then mkApp args[4]! d.appArg! else args[4]!) rest).headBeta
   return none
 
+/-- Is `e` a variable's lookup: a valuation (or a vector) applied to a variable? -/
+def isLookup (e : Expr) : MetaM Bool := do
+  let .const c _ := e.getAppFn | return false
+  unless c.getRoot matches `Ctxt | `HVector do return false
+  let some v := e.getAppArgs.back? | return false
+  let ty ← inferType v
+  -- a variable `⟨i, h⟩` has the type `Var Γ t` unfolds to
+  return ty.isAppOf ``Ctxt.Var || ty.isAppOf ``Subtype
+
 /-- Reduce every data subterm of `e` (not functions, types or proofs). -/
-def reduceAll (e : Expr) : MetaM Expr :=
-  transform e (post := fun e => do
+partial def reduceAll (e : Expr) : MetaM Expr :=
+  transform e (pre := fun e => do
+    -- A loop's body and a group's bodies are left as they are, so that lemmas about them
+    -- (a loop's `step`, a group's table) still match; the loop's state, and the function
+    -- and the arguments a table is applied to, are reduced.
+    if e.isAppOf `RegionCfFunctor.whileLoop || e.isAppOf `RegionCfFunctor.funcsFix then
+      let args ← e.getAppArgs.mapIdxM fun i a => if i < 2 then pure a else reduceAll a
+      return .done (mkAppN e.getAppFn args)
+    return .continue)
+  (post := fun e => do
     if e.isApp && !(← isProp e) && !(← isType e) && !(← isProof e) then
       if let some e' ← decideIte e then return .done e'
       let ty ← whnf (← inferType e)
-      if ty.isForall || (← isClass? ty).isSome then return .continue
+      -- Functions are left alone, except a variable's lookup (a function value in a
+      -- valuation), which reduces to the value.
+      if (ty.isForall && !(← isLookup e)) || (← isClass? ty).isSome then return .continue
       if let some e' ← decideIte e then return .done e'
       if ← isArith e then return .continue
       let e' ← step e

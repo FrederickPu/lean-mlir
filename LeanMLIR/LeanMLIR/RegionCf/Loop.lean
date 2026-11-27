@@ -46,7 +46,7 @@ def bodyAst : Region 0 := [mlir_region| {
     "return"(%f, %n', %a', %b') : (!nat, !nat, !nat, !nat) -> ()
 }]
 
-def body := [cf_region| $(bodyAst)]
+abbrev body := [cf_region| $(bodyAst)]
 
 /-- `(n, a, b) := (n, 0, 1); while body; return a` -/
 def prog := [cf| {
@@ -115,8 +115,8 @@ theorem Fib'_eq (n : Nat) : Fib' n = some (fib n) := by
   obtain ⟨b', h⟩ := loop n 0 1
   unfold Fib' prog
   cf_reduce
-  -- `cf_reduce` ran the loop's body as far as it goes; it is still `step`, up to unfolding
-  erw [h]
+  -- `cf_reduce` leaves the loop's body as it is: `step`, so `loop` rewrites
+  rw [h]
   cf_reduce
   have := iter_fib n 0
   simp only [fib, Nat.add_zero] at this
@@ -137,7 +137,7 @@ def spinAst : Region 0 := [mlir_region| {
     "return"(%one, %m) : (!nat, !nat) -> ()
 }]
 
-def spinBody := [cf_region| $(spinAst)]
+abbrev spinBody := [cf_region| $(spinAst)]
 
 def spin := [cf| {
   ^bb0(%n : !nat):
@@ -159,7 +159,7 @@ theorem spin_none (n : Nat) : spin.denote (Valuation.ofHVector ((n : Nat) ::ₕ 
     ((n : Nat) ::ₕ .nil) trivial
   unfold spin
   cf_reduce
-  erw [h]
+  rw [h]
   rfl
 
 end RegionCfFunctor.Loop

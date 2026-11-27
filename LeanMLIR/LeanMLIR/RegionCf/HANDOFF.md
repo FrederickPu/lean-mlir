@@ -80,7 +80,7 @@ may need its namespace added there.
 
 ```
 def bodyAst : MLIR.AST.Region 0 := [mlir_region| { ^bb0(%n : !nat, …): … }]
-def body := [cf_region| $(bodyAst)]          -- the region, to state lemmas about
+abbrev body := [cf_region| $(bodyAst)]       -- the region, to state lemmas about
 def prog := [cf| {
   ^bb0(%n : !nat):
     %c0 = "arith.cst"() {value = 0} : () -> (!nat)
@@ -98,7 +98,8 @@ def prog := [cf| {
   functions) and the types of its `return`.
 - Regions see only their block arguments (an outer name is an `Undeclared name` error).
 - Splicing a region (`$(bodyAst)`) is how to name a body for lemmas: `body` is then
-  syntactically the region inside `prog`, up to unfolding `body` (so use `erw`).
+  syntactically the region inside `prog`, up to unfolding `body`. Declare it (and a group's
+  `bodyRegs`) as an `abbrev`, so that `rw` sees through it.
 
 ## Semantics of the region ops
 
@@ -153,11 +154,12 @@ program's own arguments are given reversed (`Valuation.ofHVector (rev [n, m])` f
      `hFb := HVector.denote_mono (d := Arith) bodyRegs`.
   3. `table`: induction on `n`, by `rw` with the body lemmas and the induction hypotheses,
      then `rfl`.
-  4. `F'_eq`: `cf_reduce` reduces `prog`, then `erw` with `table`.
+  4. `F'_eq`: `cf_reduce` reduces `prog`, then `rw` with `table`. The table `Fb` is stated
+     as `bodies sigs Tb sigs (HVector.denote bodyRegs)`, the form the op's denotation gives.
 - **`Fib'_eq`** (`Loop.lean`): `step_eq` (by `rfl` on each case), `loop` by induction with
-  `whileLoop_unfold`, then `cf_reduce`, `erw [loop …]`, `cf_reduce`, `iter_fib`.
+  `whileLoop_unfold`, then `cf_reduce`, `rw [loop …]`, `cf_reduce`, `iter_fib`.
 - **`Mul'_eq`** (`Nested.lean`): per-loop step lemmas split into zero/successor cases (the
-  outer successor step runs the inner loop: `cf_reduce`, `erw [inner_loop …]`, `rfl`), each
+  outer successor step runs the inner loop: `cf_reduce`, `rw [inner_loop …]`, `rfl`), each
   loop by `whileLoop_inv` with the invariant and measure defined by pattern matching on the
   state vector (`innerInv`, `innerMeasure`; with `st.head`/`st.tail.head` instead, `omega`
   cannot see through the `match`es).
@@ -175,9 +177,11 @@ by unfolding its head while that makes progress, using `whnfCore` with
 - it never unfolds into a `match` that is stuck (`isStuck`);
 - it never unfolds `ite`/`dite`; `decideIte` picks a branch only when the condition
   decides (this is also how `ofVals`'s type checks and `Base.isTrue` flags evaluate);
-- it never unfolds `funcsFix` or `whileLoop`;
+- it never unfolds `funcsFix` or `whileLoop`, and leaves their body/table argument as it is
+  (it reduces their other arguments);
 - it leaves arithmetic and decision instances alone (`keptClass`, `isArith`);
-- it skips function-typed, type, proof and instance subterms;
+- it skips function-typed, type, proof and instance subterms, except a function value
+  looked up in a valuation (`isLookup`: a valuation applied to a variable);
 - it zeta-reduces at the end and runs at most 100 passes.
 
 As a result, a call to an unknown function stays as `(gv [⟨.nat, n⟩]).bind …`, and the rest
@@ -191,8 +195,12 @@ Pitfalls found along the way:
   `congr` first.
 - `rw` with a lemma about the abbrev `T` fails because `T` hides the `funcsFix` head:
   restate it (`unfold T at h`, or state it about `funcsFix Fb …`).
-- `cf_reduce` also reduces inside the `whileLoop`'s step function, so afterwards it no longer
-  matches `step` syntactically: `rw [loop …]` fails, `erw` works.
+- `cf_reduce` leaves a `whileLoop`'s body and a `funcsFix`'s table as they are, and reduces
+  their other arguments (the state; the index and arguments). That is what lets lemmas about
+  a loop's `step` or a group's table rewrite with `rw`, provided `step`, the region (`body`)
+  and `bodyRegs` are `abbrev`s, and the table is stated with `HVector.denote bodyRegs`. It
+  also reduces a function value looked up in a valuation (`isLookup`), so a loop state
+  holding a function matches.
 - To build `RegsMono` for a concrete group, give the regions `HVector` its full type in a
   definition (`bodyRegs`, of type `HVector … (bodySig sigs sigs)`), and pass the base
   dialect to `HVector.denote_mono (d := Arith)`.
@@ -207,10 +215,8 @@ Pitfalls found along the way:
 
 ## Remaining work
 
-1. **Proof ergonomics.** Every proof needs `erw` after `cf_reduce`, because `cf_reduce` also
-   reduces inside loop and function bodies (so they no longer match `step`, `fBody`, …
-   syntactically). A `cf_reduce` that leaves the arguments of `whileLoop`/`funcsFix` alone
-   would make plain `rw` work. Step lemmas per loop are still written by hand.
+1. **Proof ergonomics.** Done: plain `rw` works after `cf_reduce` (see the pitfalls). Still
+   by hand: each loop's step lemmas and each group's `bodyRegs`/table definitions.
 2. **Typed function values (optional).** Function values check their argument and result
    types when called (`ofVals`). Statically typed functions (`fn ts us`, denoted on
    `HVector`s) would need a dependently typed table for `funcsFix`.

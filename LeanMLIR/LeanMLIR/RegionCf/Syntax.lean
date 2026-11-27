@@ -158,10 +158,11 @@ instance [DialectPrint d] : DialectPrint (RegionCf d) where
 To prove things about a region on its own, define its syntax once and splice it in:
 ```
 def bodyAst : MLIR.AST.Region 0 := [mlir_region| { ^bb0(…): … }]
-def body := [cf_region| $(bodyAst)]                       -- the region, to state lemmas
+abbrev body := [cf_region| $(bodyAst)]                    -- the region, to state lemmas
 def prog := [cf| { … "cf.while"(…) ($(bodyAst)) … }]      -- the program using it
 ```
-Both are elaborated from the same syntax, so `body` is exactly the region in `prog`. -/
+Both are elaborated from the same syntax, so `body` is exactly the region in `prog`. With
+`body` an `abbrev`, a lemma about it rewrites (`rw`) in `prog` after `cf_reduce`. -/
 def elabRegion [ToExpr d.Op] [ToExpr d.Ty] [DialectToExpr d] (reg : TSyntax `mlir_region) :
     Elab.TermElabM Lean.Expr := do
   let ⟨_, eff, _, com⟩ ← SSA.elabIntoComObj reg (RegionCf d)

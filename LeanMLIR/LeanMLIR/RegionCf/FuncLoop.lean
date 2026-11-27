@@ -62,9 +62,9 @@ def sumsqAst : Region 0 := [mlir_region| {
     "return"(%acc) : (!nat) -> ()
 }]
 
-def loopBody := [cf_region| $(loopAst)]
-def sqBody := [cf_region| $(sqAst)]
-def sumsqBody := [cf_region| $(sumsqAst)]
+abbrev loopBody := [cf_region| $(loopAst)]
+abbrev sqBody := [cf_region| $(sqAst)]
+abbrev sumsqBody := [cf_region| $(sumsqAst)]
 
 /-- `funcs { sq; sumsq } in sumsq(n)` -/
 def prog := [cf| {
@@ -150,7 +150,7 @@ theorem loop (fv : FV) (hf : IsSq fv) (i acc : Nat) :
 abbrev sigs : List (List Arith.Ty × List Arith.Ty) := [([.nat], [.nat]), ([.nat], [.nat])]
 
 /-- The bodies, as the `funcs` op's regions. -/
-def bodyRegs : HVector (fun t : Ctxt (Ty Arith.Ty) × List (Ty Arith.Ty) =>
+abbrev bodyRegs : HVector (fun t : Ctxt (Ty Arith.Ty) × List (Ty Arith.Ty) =>
     _root_.Com (RegionCf Arith) t.1 .impure t.2) (bodySig sigs sigs) :=
   .cons sqBody (.cons sumsqBody .nil)
 
@@ -159,7 +159,7 @@ theorem hFb : RegsMono (HVector.denote (d := RegionCf Arith) bodyRegs) :=
 
 /-- The functions of the program. -/
 noncomputable abbrev T : FnTable V :=
-  funcsFix fun Tb => bodies sigs Tb sigs (Com.denote sqBody ::ₕ Com.denote sumsqBody ::ₕ .nil)
+  funcsFix fun Tb => bodies sigs Tb sigs (HVector.denote (d := RegionCf Arith) bodyRegs)
 
 theorem T_sq : IsSq (T 0) := fun i =>
   (funcsFix_apply _ _ hFb 0 [⟨.nat, i⟩]).trans rfl
@@ -169,7 +169,7 @@ theorem T_sumsq (n : Nat) : T 1 [⟨.nat, n⟩] = some [⟨.nat, sumsq n⟩] := 
   show Option.map (toVals (ts := [Arith.Ty.nat])) (sumsqBody.denote (Valuation.ofHVector ((n : Nat) ::ₕ T 1 ::ₕ T 0 ::ₕ .nil))) = _
   unfold sumsqBody
   cf_reduce
-  erw [loop (T 0) T_sq n 0]
+  rw [loop (T 0) T_sq n 0]
   cf_reduce
   simp
 
@@ -177,10 +177,10 @@ theorem T_sumsq (n : Nat) : T 1 [⟨.nat, n⟩] = some [⟨.nat, sumsq n⟩] := 
 theorem Sumsq'_eq (n : Nat) : Sumsq' n = some (sumsq n) := by
   unfold Sumsq' prog
   cf_reduce
-  -- `T` restated with `funcsFix` as its head, as it is in the reduced program
+  -- `T` unfolded, so that its `funcsFix` head matches the reduced program
   have h := T_sumsq n
   unfold T at h
-  erw [h]
+  rw [h]
   rfl
 
 end RegionCfFunctor.FuncLoop
