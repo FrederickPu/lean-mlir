@@ -5,19 +5,23 @@ import LeanMLIR.Framework
 import LeanMLIR.RegionCf.Fix
 
 /-!
-# A control-flow dialect, all region ops
+# `RegionCf d`: structured control flow over a base dialect `d`
 
-Structured control flow inside LeanMLIR's SSA, with no other IR:
+`RegionCf d` extends a dialect `d` of region-free ops (its arithmetic) with control flow,
+all as region ops, inside LeanMLIR's SSA, with no other IR (cf. `ScfFunctor`):
 
+* `coe o`: an op `o` of `d`;
 * `ite ts rs`: if-then-else, one region per branch;
-* `while ts`: a loop; its body returns a flag (`0`: stop, the `break`) and the new state;
-* `funcs sigs ts rs`: a group of mutually recursive functions `f₀ … fₖ`, `fᵢ` taking `nᵢ`
-  and returning `mᵢ` numbers. Its regions: first the code using them, then one body per
-  function. Every region sees all the functions as values (`fn n m`);
-* `call n m f xs`: apply a function value.
+* `while ts`: a loop; its body returns a flag (false: stop, the `break`) and the new state;
+* `funcs sigs ts rs`: a group of mutually recursive functions `f₀ … fₖ`, `fᵢ` taking values
+  of types `sigsᵢ.1` and returning values of types `sigsᵢ.2`. Its regions: first the code
+  using them, then one body per function. Every region sees all the functions as values;
+* `call ts us f xs`: apply a function value.
 
 The dialect's monad is `Option`: a loop or a recursion that does not stop has no value.
-Values are numbers and functions (`⟦fn n m⟧ = List Nat → Option (List Nat)`).
+Values are `d`'s values and functions. A function value takes and returns lists of `d`'s
+values, each tagged with its type (`Val d`), and a call checks the types when it runs (a
+mismatch has no value).
 
 ## Argument order
 
@@ -34,21 +38,33 @@ open TyDenote (toType)
 
 namespace RegionCfFunctor
 
-inductive Ty
-  | nat
-  | fn (n m : Nat)
+/-! ## Types and values -/
+
+/-- A value of a base type, tagged with its type. -/
+abbrev Val (T : Type) [TyDenote T] := Σ t : T, toType t
+
+/-- The types of `RegionCf d`: those of `d`, and functions. -/
+inductive Ty (T : Type)
+  | base (t : T)
+  | fn
   deriving DecidableEq, Repr
 
-instance : TyDenote Ty where
+instance {T : Type} [TyDenote T] : TyDenote (Ty T) where
   toType
-    | .nat => Nat
-    | .fn _ _ => List Nat → Option (List Nat)
+    | .base t => toType t
+    | .fn => List (Val T) → Option (List (Val T))
+
+variable {T : Type}
+
+/-- Base types. -/
+abbrev bases (ts : List T) : List (Ty T) := ts.map .base
 
 /-- The types of a group of functions. -/
-def fnTys (sigs : List (Nat × Nat)) : List Ty := sigs.map fun (n, m) => .fn n m
+abbrev fnTys (sigs : List (List T × List T)) : List (Ty T) := sigs.map fun _ => .fn
 
-/-- `n` numbers. -/
-abbrev nats (n : Nat) : List Ty := List.replicate n .nat
+/-- The regions of a group's bodies, for its signatures `sigs₀`. -/
+abbrev bodySig (sigs₀ sigs : List (List T × List T)) : List (Ctxt (Ty T) × List (Ty T)) :=
+  sigs.map fun (a, r) => (⟨(fnTys sigs₀ ++ bases a).reverse⟩, bases r)
 
 /-- Reverse a vector onto another (as `List.reverseAux`, so the types agree by `rfl`). -/
 def revAux {α : Type} {A : α → Type} : {as bs : List α} → HVector A as → HVector A bs →
@@ -60,142 +76,142 @@ def revAux {α : Type} {A : α → Type} : {as bs : List α} → HVector A as �
 def rev {α : Type} {A : α → Type} {as : List α} (xs : HVector A as) : HVector A as.reverse :=
   revAux xs .nil
 
-inductive Op
-  | cst (k : Nat)
-  | add | sub | mul
-  /-- `1` if the argument is `0`, else `0`. -/
-  | eqz
-  | ite (ts rs : List Ty)
-  | while (ts : List Ty)
-  | funcs (sigs : List (Nat × Nat)) (ts rs : List Ty)
-  | call (n m : Nat)
-  deriving Repr, DecidableEq
+section Vals
+variable [TyDenote T]
 
-abbrev CF : Dialect where
-  Op := Op
-  Ty := Ty
-  m := Option
+/-- Base values, as a vector of `d`'s values. -/
+def unbase : {ts : List T} → HVector toType (bases ts) → HVector toType ts
+  | [], .nil => .nil
+  | _ :: _, .cons x xs => .cons x (unbase xs)
 
-instance : DialectSignature CF where
-  signature
-    | .cst _ => ⟨[], [], [.nat], .pure⟩
-    | .eqz => ⟨[.nat], [], [.nat], .pure⟩
-    | .ite ts rs => ⟨.nat :: ts, [(⟨ts.reverse⟩, rs), (⟨ts.reverse⟩, rs)], rs.reverse, .impure⟩
-    | .while ts => ⟨ts, [(⟨ts.reverse⟩, .nat :: ts)], ts.reverse, .impure⟩
-    | .funcs sigs ts rs =>
-      ⟨ts, (⟨(fnTys sigs ++ ts).reverse⟩, rs) ::
-          sigs.map (fun (n, m) => (⟨(fnTys sigs ++ nats n).reverse⟩, nats m)),
-        rs.reverse, .impure⟩
-    | .call n m => ⟨.fn n m :: nats n, [], (nats m).reverse, .impure⟩
-    | _ => ⟨[.nat, .nat], [], [.nat], .pure⟩
+/-- `d`'s values, as base values. -/
+def rebase : {ts : List T} → HVector toType ts → HVector toType (bases ts)
+  | [], .nil => .nil
+  | _ :: _, .cons x xs => .cons x (rebase xs)
 
+/-- Base values as a list, each tagged with its type. -/
+def toVals : {ts : List T} → HVector toType (bases ts) → List (Val T)
+  | [], .nil => []
+  | t :: _, .cons x xs => ⟨t, x⟩ :: toVals xs
 
-/-! ## The effect of each op -/
+variable [DecidableEq T]
 
-@[simp] theorem effectKind_cst (k : Nat) : DialectSignature.effectKind (d := CF) (.cst k) = .pure := rfl
-@[simp] theorem effectKind_add : DialectSignature.effectKind (d := CF) .add = .pure := rfl
-@[simp] theorem effectKind_sub : DialectSignature.effectKind (d := CF) .sub = .pure := rfl
-@[simp] theorem effectKind_mul : DialectSignature.effectKind (d := CF) .mul = .pure := rfl
-@[simp] theorem effectKind_eqz : DialectSignature.effectKind (d := CF) .eqz = .pure := rfl
-@[simp] theorem effectKind_ite (ts rs) : DialectSignature.effectKind (d := CF) (.ite ts rs) = .impure := rfl
-@[simp] theorem effectKind_while (ts) : DialectSignature.effectKind (d := CF) (.while ts) = .impure := rfl
-@[simp] theorem effectKind_funcs (sigs ts rs) :
-    DialectSignature.effectKind (d := CF) (.funcs sigs ts rs) = .impure := rfl
-@[simp] theorem effectKind_call (n m) : DialectSignature.effectKind (d := CF) (.call n m) = .impure := rfl
-/-! ## Numbers in and out of functions -/
-
-/-- `n` numbers as a list. -/
-def toNats : {n : Nat} → HVector toType (nats n) → List Nat
-  | 0, .nil => []
-  | _ + 1, .cons (x : Nat) xs => x :: toNats xs
-
-/-- A list of `n` numbers. -/
-def ofNats : (n : Nat) → List Nat → Option (HVector toType (nats n))
-  | 0, [] => some .nil
-  | n + 1, x :: xs => (ofNats n xs).map (.cons (x : Nat))
+/-- A list of values of the types `ts` (no value if a type differs). -/
+def ofVals : (ts : List T) → List (Val T) → Option (HVector toType (bases ts))
+  | [], [] => some .nil
+  | t :: ts, ⟨u, x⟩ :: xs =>
+    if h : u = t then (ofVals ts xs).map (.cons (h ▸ x : toType t)) else none
   | _, _ => none
 
-/-- The function values of a table, for a group of signatures (function `i` is `T i`). -/
-def fnVals (T : FnTable) : (sigs : List (Nat × Nat)) → (i : Nat := 0) → HVector toType (fnTys sigs)
+end Vals
+
+/-! ## Ops -/
+
+/-- The ops of `RegionCf d`: those of `d` (`coe`), and control flow. -/
+inductive Op (Op' T : Type)
+  | coe (o : Op')
+  | ite (ts rs : List (Ty T))
+  | while (ts : List (Ty T))
+  | funcs (sigs : List (List T × List T)) (ts rs : List (Ty T))
+  | call (ts us : List T)
+  deriving DecidableEq, Repr
+
+/-- **Structured control flow over the dialect `d`.** -/
+def RegionCf (d : Dialect) : Dialect where
+  Op := Op d.Op d.Ty
+  Ty := Ty d.Ty
+  m := Option
+
+/-- What `RegionCf d` needs of the base dialect `d`. -/
+class Base (d : Dialect) [TyDenote d.Ty] [DialectSignature d] where
+  /-- The type of `ite`'s condition and of `while`'s flag. -/
+  condTy : d.Ty
+  /-- When a condition holds, and a loop continues. -/
+  isTrue : toType condTy → Bool
+  /-- `d`'s ops have no regions. -/
+  noRegions : ∀ o : d.Op, DialectSignature.regSig o = []
+  /-- Run `d`'s effects (`some`, for a pure dialect). -/
+  run {α : Type} : d.m α → Option α
+
+variable {d : Dialect} [TyDenote d.Ty] [DialectSignature d] [Base d]
+
+instance : Monad (RegionCf d).m := inferInstanceAs (Monad Option)
+instance : LawfulMonad (RegionCf d).m := inferInstanceAs (LawfulMonad Option)
+instance : TyDenote (RegionCf d).Ty := inferInstanceAs (TyDenote (Ty d.Ty))
+instance [DecidableEq d.Ty] : DecidableEq (RegionCf d).Ty := inferInstanceAs (DecidableEq (Ty d.Ty))
+instance [DecidableEq d.Op] [DecidableEq d.Ty] : DecidableEq (RegionCf d).Op :=
+  inferInstanceAs (DecidableEq (Op d.Op d.Ty))
+
+instance : DialectSignature (RegionCf d) where
+  signature
+    | .coe o => ⟨bases (DialectSignature.sig o), [], bases (DialectSignature.returnTypes o), .impure⟩
+    | .ite ts rs =>
+      ⟨.base (Base.condTy (d := d)) :: ts, [(⟨ts.reverse⟩, rs), (⟨ts.reverse⟩, rs)], rs.reverse, .impure⟩
+    | .while ts => ⟨ts, [(⟨ts.reverse⟩, .base (Base.condTy (d := d)) :: ts)], ts.reverse, .impure⟩
+    | .funcs sigs ts rs =>
+      ⟨ts, (⟨(fnTys sigs ++ ts).reverse⟩, rs) ::
+          bodySig sigs sigs,
+        rs.reverse, .impure⟩
+    | .call ts us => ⟨.fn :: bases ts, [], (bases us).reverse, .impure⟩
+
+/-! ## Functions -/
+
+section Functions
+variable {T : Type} [TyDenote T]
+
+/-- The function values of a table, for a group of signatures (function `i` is `Tb i`). -/
+def fnVals (Tb : FnTable (Val T)) :
+    (sigs : List (List T × List T)) → (i : Nat := 0) → HVector toType (fnTys sigs)
   | [], _ => .nil
-  | _ :: sigs, i => .cons (T i) (fnVals T sigs (i + 1))
+  | _ :: sigs, i => .cons (Tb i : toType (Ty.fn (T := T))) (fnVals Tb sigs (i + 1))
 
 /-- A region, as `denote` receives it. -/
-abbrev RegFn (t : Ctxt Ty × List Ty) := t.1.Valuation → Option (HVector toType t.2)
+abbrev RegFn (t : Ctxt (Ty T) × List (Ty T)) := t.1.Valuation → Option (HVector toType t.2)
+
+variable [DecidableEq T]
 
 /-- The bodies of a group, as a table transformer: function `i` runs region `i` on the
-functions of `T` and its arguments. -/
-def bodies (sigs₀ : List (Nat × Nat)) (T : FnTable) : (sigs : List (Nat × Nat)) →
-    HVector RegFn (sigs.map fun (n, m) => (⟨(fnTys sigs₀ ++ nats n).reverse⟩, nats m)) → FnTable
+functions of `Tb` and its arguments. -/
+def bodies (sigs₀ : List (List T × List T)) (Tb : FnTable (Val T)) :
+    (sigs : List (List T × List T)) → HVector RegFn (bodySig sigs₀ sigs) → FnTable (Val T)
   | [], .nil => fun _ _ => none
-  | (n, _) :: sigs, .cons r rs => fun i xs =>
+  | (a, _) :: sigs, .cons r rs => fun i xs =>
     if i = 0 then
-      (ofNats n xs).bind fun ys =>
-        (r (Valuation.ofHVector (rev (fnVals T sigs₀ ++ ys)))).map toNats
-    else bodies sigs₀ T sigs rs (i - 1) xs
+      (ofVals a xs).bind fun ys =>
+        (r (Valuation.ofHVector (rev (fnVals Tb sigs₀ ++ ys)))).map toVals
+    else bodies sigs₀ Tb sigs rs (i - 1) xs
 
-instance : DialectDenote CF where
+end Functions
+
+/-! ## Semantics -/
+
+variable [DecidableEq d.Ty] [DialectDenote d] [Monad d.m]
+
+/-- No regions, for an op of `d`. -/
+def noRegs (o : d.Op) :
+    HVector (fun t : Ctxt d.Ty × List d.Ty => t.1.Valuation → EffectKind.impure.toMonad d.m (HVector toType t.2))
+      (DialectSignature.regSig o) :=
+  (Base.noRegions o).symm ▸ .nil
+
+/-- An op of `d`, on base values. -/
+def coeDenote (o : d.Op) (xs : HVector toType (bases (DialectSignature.sig o))) :
+    Option (HVector toType (bases (DialectSignature.returnTypes o))) :=
+  (Base.run (EffectKind.liftEffect (EffectKind.le_impure _)
+    (DialectDenote.denote o (unbase xs) (noRegs o)))).map rebase
+
+instance : DialectDenote (RegionCf d) where
   denote
-    | .cst k, _, _ => (.cons (k : Nat) .nil : HVector toType [Ty.nat])
-    | .add, .cons (a : Nat) (.cons (b : Nat) .nil), _ => (.cons (a + b) .nil : HVector toType [Ty.nat])
-    | .sub, .cons (a : Nat) (.cons (b : Nat) .nil), _ => (.cons (a - b) .nil : HVector toType [Ty.nat])
-    | .mul, .cons (a : Nat) (.cons (b : Nat) .nil), _ => (.cons (a * b) .nil : HVector toType [Ty.nat])
-    | .eqz, .cons (a : Nat) .nil, _ =>
-      (.cons (if a = 0 then 1 else 0 : Nat) .nil : HVector toType [Ty.nat])
-    | .ite _ _, .cons (c : Nat) xs, .cons thn (.cons els .nil) =>
-      (if c ≠ 0 then thn (Valuation.ofHVector (rev xs)) else els (Valuation.ofHVector (rev xs))).map rev
+    | .coe o, xs, _ => coeDenote o xs
+    | .ite _ _, .cons c xs, .cons thn (.cons els .nil) =>
+      (if Base.isTrue (d := d) c then thn (Valuation.ofHVector (rev xs))
+        else els (Valuation.ofHVector (rev xs))).map rev
     | .while _, xs, .cons body .nil =>
-      (whileLoop (fun st => (body (Valuation.ofHVector (rev st))).map fun r => (r.head, r.tail))
-        xs).map rev
+      (whileLoop (fun st => (body (Valuation.ofHVector (rev st))).map
+        fun r => (Base.isTrue (d := d) r.head, r.tail)) xs).map rev
     | .funcs sigs _ _, xs, .cons main rs =>
       (main (Valuation.ofHVector
-        (rev (fnVals (funcsFix fun T => bodies sigs T sigs rs) sigs ++ xs)))).map rev
-    | .call _ m, .cons (f : List Nat → Option (List Nat)) xs, _ =>
-      ((f (toNats xs)).bind (ofNats m)).map rev
-
-/-! ## The semantics of each op, as `simp` lemmas
-
-Stated with the argument vectors typed as `denote` sees them (`DialectSignature.sig op`), so
-`simp` matches them in a program's denotation. -/
-
-section Denote
-local notation "Args" op => HVector toType (DialectSignature.sig (d := CF) op)
-local notation "Regs" op => HVector RegFn (DialectSignature.regSig (d := CF) op)
-
-@[simp] theorem denote_cst (k : Nat) (r : Regs (.cst k)) :
-    DialectDenote.denote (d := CF) (.cst k) (no_index (.nil : Args (.cst k))) r =
-      (.cons (k : Nat) .nil : HVector toType [Ty.nat]) := rfl
-@[simp] theorem denote_add (a b : Nat) (r : Regs .add) :
-    DialectDenote.denote (d := CF) .add (no_index (.cons a (.cons b .nil) : Args .add)) r =
-      (.cons (a + b) .nil : HVector toType [Ty.nat]) := rfl
-@[simp] theorem denote_sub (a b : Nat) (r : Regs .sub) :
-    DialectDenote.denote (d := CF) .sub (no_index (.cons a (.cons b .nil) : Args .sub)) r =
-      (.cons (a - b) .nil : HVector toType [Ty.nat]) := rfl
-@[simp] theorem denote_mul (a b : Nat) (r : Regs .mul) :
-    DialectDenote.denote (d := CF) .mul (no_index (.cons a (.cons b .nil) : Args .mul)) r =
-      (.cons (a * b) .nil : HVector toType [Ty.nat]) := rfl
-@[simp] theorem denote_eqz (a : Nat) (r : Regs .eqz) :
-    DialectDenote.denote (d := CF) .eqz (no_index (.cons a .nil : Args .eqz)) r =
-      (.cons (if a = 0 then 1 else 0 : Nat) .nil : HVector toType [Ty.nat]) := rfl
-@[simp] theorem denote_ite (ts rs : List Ty) (c : Nat) (xs : HVector toType ts) (thn els) :
-    DialectDenote.denote (d := CF) (.ite ts rs) (no_index (.cons c xs : Args (.ite ts rs)))
-      (no_index (.cons thn (.cons els .nil) : Regs (.ite ts rs))) =
-      (if c ≠ 0 then thn (Valuation.ofHVector (rev xs))
-        else els (Valuation.ofHVector (rev xs))).map rev := rfl
-@[simp] theorem denote_while (ts : List Ty) (xs : Args (.while ts)) (body) :
-    DialectDenote.denote (d := CF) (.while ts) (no_index xs) (no_index (.cons body .nil : Regs (.while ts))) =
-      (whileLoop (fun st => (body (Valuation.ofHVector (rev st))).map fun r => (r.head, r.tail))
-        (xs : HVector toType ts)).map rev := rfl
-@[simp] theorem denote_funcs (sigs : List (Nat × Nat)) (ts rs : List Ty) (xs : Args (.funcs sigs ts rs))
-    (main regs) :
-    DialectDenote.denote (d := CF) (.funcs sigs ts rs) (no_index xs) (no_index (.cons main regs : Regs (.funcs sigs ts rs))) =
-      (main (Valuation.ofHVector (rev (fnVals (funcsFix fun T => bodies sigs T sigs regs) sigs ++
-        (xs : HVector toType ts))))).map rev := rfl
-@[simp] theorem denote_call (n m : Nat) (fv : List Nat → Option (List Nat)) (xs : HVector toType (nats n))
-    (r : Regs (.call n m)) :
-    DialectDenote.denote (d := CF) (.call n m) (no_index (.cons fv xs : Args (.call n m))) r =
-      ((fv (toNats xs)).bind (ofNats m)).map rev := rfl
-
-end Denote
+        (rev (fnVals (funcsFix fun Tb => bodies sigs Tb sigs rs) sigs ++ xs)))).map rev
+    | .call _ us, .cons (f : List (Val d.Ty) → Option (List (Val d.Ty))) xs, _ =>
+      ((f (toVals xs)).bind (ofVals us)).map rev
 
 end RegionCfFunctor

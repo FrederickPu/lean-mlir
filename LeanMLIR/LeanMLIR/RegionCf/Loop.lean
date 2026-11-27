@@ -3,7 +3,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import LeanMLIR.RegionCf.Mono
 import LeanMLIR.RegionCf.Simp
-import LeanMLIR.RegionCf.Syntax
+import LeanMLIR.RegionCf.Arith
 
 /-!
 # A loop, as a region op
@@ -27,20 +27,20 @@ namespace RegionCfFunctor.Loop
 
 open MLIR.AST (Region)
 
-abbrev N := Ty.nat
+abbrev N : Ty Arith.Ty := .base .nat
 
 /-- The loop body, on the state `(n, a, b)`: a flag (`0`: break) and the new state. -/
 def bodyAst : Region 0 := [mlir_region| {
   ^bb0(%n : !nat, %a : !nat, %b : !nat):
     %f, %n', %a', %b' = "cf.ite"(%n, %n, %a, %b) ({
       ^bb0(%n : !nat, %a : !nat, %b : !nat):
-        %one = "cf.cst"() {value = 1} : () -> (!nat)
-        %m = "cf.sub"(%n, %one) : (!nat, !nat) -> (!nat)
-        %s = "cf.add"(%a, %b) : (!nat, !nat) -> (!nat)
+        %one = "arith.cst"() {value = 1} : () -> (!nat)
+        %m = "arith.sub"(%n, %one) : (!nat, !nat) -> (!nat)
+        %s = "arith.add"(%a, %b) : (!nat, !nat) -> (!nat)
         "return"(%one, %m, %b, %s) : (!nat, !nat, !nat, !nat) -> ()
     }, {
       ^bb0(%n : !nat, %a : !nat, %b : !nat):
-        %zero = "cf.cst"() {value = 0} : () -> (!nat)
+        %zero = "arith.cst"() {value = 0} : () -> (!nat)
         "return"(%zero, %n, %a, %b) : (!nat, !nat, !nat, !nat) -> ()
     }) : (!nat, !nat, !nat, !nat) -> (!nat, !nat, !nat, !nat)
     "return"(%f, %n', %a', %b') : (!nat, !nat, !nat, !nat) -> ()
@@ -51,8 +51,8 @@ def body := [cf_region| $(bodyAst)]
 /-- `(n, a, b) := (n, 0, 1); while body; return a` -/
 def prog := [cf| {
   ^bb0(%n : !nat):
-    %c0 = "cf.cst"() {value = 0} : () -> (!nat)
-    %c1 = "cf.cst"() {value = 1} : () -> (!nat)
+    %c0 = "arith.cst"() {value = 0} : () -> (!nat)
+    %c1 = "arith.cst"() {value = 1} : () -> (!nat)
     %n', %a, %b = "cf.while"(%n, %c0, %c1) ($(bodyAst)) : (!nat, !nat, !nat) -> (!nat, !nat, !nat)
     "return"(%a) : (!nat) -> ()
 }]
@@ -76,13 +76,13 @@ The body, run on a state, is one step (`cf_reduce`); the loop, by `whileLoop_unf
 induction on `n`, is `n` steps. -/
 
 /-- The loop's step function, as `denote` gives it to `whileLoop`. -/
-abbrev step (st : HVector toType [N, N, N]) : Option (Nat × HVector toType [N, N, N]) :=
-  (body.denote (Valuation.ofHVector (rev st))).map fun r => (r.head, r.tail)
+abbrev step (st : HVector toType [N, N, N]) : Option (Bool × HVector toType [N, N, N]) :=
+  (body.denote (Valuation.ofHVector (rev st))).map fun r => (Base.isTrue (d := Arith) r.head, r.tail)
 
 theorem step_eq (n a b : Nat) :
     step ((n : Nat) ::ₕ (a : Nat) ::ₕ (b : Nat) ::ₕ .nil) =
-      if n = 0 then some (0, (n : Nat) ::ₕ (a : Nat) ::ₕ (b : Nat) ::ₕ .nil)
-      else some (1, (n - 1 : Nat) ::ₕ (b : Nat) ::ₕ (a + b : Nat) ::ₕ .nil) := by
+      if n = 0 then some (false, (n : Nat) ::ₕ (a : Nat) ::ₕ (b : Nat) ::ₕ .nil)
+      else some (true, (n - 1 : Nat) ::ₕ (b : Nat) ::ₕ (a + b : Nat) ::ₕ .nil) := by
   unfold step body
   cases n with
   | zero => rfl
@@ -132,8 +132,8 @@ has no value (`Option`'s `none`), by `whileLoop_diverges`. -/
 
 def spinAst : Region 0 := [mlir_region| {
   ^bb0(%n : !nat):
-    %one = "cf.cst"() {value = 1} : () -> (!nat)
-    %m = "cf.add"(%n, %one) : (!nat, !nat) -> (!nat)
+    %one = "arith.cst"() {value = 1} : () -> (!nat)
+    %m = "arith.add"(%n, %one) : (!nat, !nat) -> (!nat)
     "return"(%one, %m) : (!nat, !nat) -> ()
 }]
 
@@ -145,17 +145,17 @@ def spin := [cf| {
     "return"(%r) : (!nat) -> ()
 }]
 
-abbrev spinStep (st : HVector toType [N]) : Option (Nat × HVector toType [N]) :=
-  (spinBody.denote (Valuation.ofHVector (rev st))).map fun r => (r.head, r.tail)
+abbrev spinStep (st : HVector toType [N]) : Option (Bool × HVector toType [N]) :=
+  (spinBody.denote (Valuation.ofHVector (rev st))).map fun r => (Base.isTrue (d := Arith) r.head, r.tail)
 
 theorem spinStep_eq (n : Nat) :
-    spinStep ((n : Nat) ::ₕ .nil) = some (1, (n + 1 : Nat) ::ₕ .nil) :=
+    spinStep ((n : Nat) ::ₕ .nil) = some (true, (n + 1 : Nat) ::ₕ .nil) :=
   rfl
 
 /-- **`spin` does not terminate.** -/
 theorem spin_none (n : Nat) : spin.denote (Valuation.ofHVector ((n : Nat) ::ₕ .nil)) = none := by
   have h := whileLoop_diverges spinStep (fun _ => True)
-    (by rintro (_ | ⟨(k : Nat), ⟨⟩⟩) -; exact ⟨1, _, spinStep_eq k, by decide, trivial⟩)
+    (by rintro (_ | ⟨(k : Nat), ⟨⟩⟩) -; exact ⟨_, spinStep_eq k, trivial⟩)
     ((n : Nat) ::ₕ .nil) trivial
   unfold spin
   cf_reduce

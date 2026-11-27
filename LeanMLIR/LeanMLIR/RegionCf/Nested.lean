@@ -3,7 +3,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import LeanMLIR.RegionCf.Mono
 import LeanMLIR.RegionCf.Simp
-import LeanMLIR.RegionCf.Syntax
+import LeanMLIR.RegionCf.Arith
 
 /-!
 # Nested loops
@@ -26,20 +26,20 @@ open MLIR.AST (Region)
 
 namespace RegionCfFunctor.Nested
 
-abbrev N := Ty.nat
+abbrev N : Ty Arith.Ty := .base .nat
 
 /-- The inner loop's body, on `(j, acc)`: add `1`, `j` times. -/
 def innerAst : Region 0 := [mlir_region| {
   ^bb0(%j : !nat, %acc : !nat):
     %f, %j', %acc' = "cf.ite"(%j, %j, %acc) ({
       ^bb0(%j : !nat, %acc : !nat):
-        %one = "cf.cst"() {value = 1} : () -> (!nat)
-        %j1 = "cf.sub"(%j, %one) : (!nat, !nat) -> (!nat)
-        %acc1 = "cf.add"(%acc, %one) : (!nat, !nat) -> (!nat)
+        %one = "arith.cst"() {value = 1} : () -> (!nat)
+        %j1 = "arith.sub"(%j, %one) : (!nat, !nat) -> (!nat)
+        %acc1 = "arith.add"(%acc, %one) : (!nat, !nat) -> (!nat)
         "return"(%one, %j1, %acc1) : (!nat, !nat, !nat) -> ()
     }, {
       ^bb0(%j : !nat, %acc : !nat):
-        %zero = "cf.cst"() {value = 0} : () -> (!nat)
+        %zero = "arith.cst"() {value = 0} : () -> (!nat)
         "return"(%zero, %j, %acc) : (!nat, !nat, !nat) -> ()
     }) : (!nat, !nat, !nat) -> (!nat, !nat, !nat)
     "return"(%f, %j', %acc') : (!nat, !nat, !nat) -> ()
@@ -51,12 +51,12 @@ def outerAst : Region 0 := [mlir_region| {
     %f, %i', %m', %acc' = "cf.ite"(%i, %i, %m, %acc) ({
       ^bb0(%i : !nat, %m : !nat, %acc : !nat):
         %j, %acc2 = "cf.while"(%m, %acc) ($(innerAst)) : (!nat, !nat) -> (!nat, !nat)
-        %one = "cf.cst"() {value = 1} : () -> (!nat)
-        %i1 = "cf.sub"(%i, %one) : (!nat, !nat) -> (!nat)
+        %one = "arith.cst"() {value = 1} : () -> (!nat)
+        %i1 = "arith.sub"(%i, %one) : (!nat, !nat) -> (!nat)
         "return"(%one, %i1, %m, %acc2) : (!nat, !nat, !nat, !nat) -> ()
     }, {
       ^bb0(%i : !nat, %m : !nat, %acc : !nat):
-        %zero = "cf.cst"() {value = 0} : () -> (!nat)
+        %zero = "arith.cst"() {value = 0} : () -> (!nat)
         "return"(%zero, %i, %m, %acc) : (!nat, !nat, !nat, !nat) -> ()
     }) : (!nat, !nat, !nat, !nat) -> (!nat, !nat, !nat, !nat)
     "return"(%f, %i', %m', %acc') : (!nat, !nat, !nat, !nat) -> ()
@@ -68,7 +68,7 @@ def outer := [cf_region| $(outerAst)]
 /-- `acc := 0; while outer; return acc` -/
 def prog := [cf| {
   ^bb0(%n : !nat, %m : !nat):
-    %c0 = "cf.cst"() {value = 0} : () -> (!nat)
+    %c0 = "arith.cst"() {value = 0} : () -> (!nat)
     %i, %m', %r = "cf.while"(%n, %m, %c0) ($(outerAst)) : (!nat, !nat, !nat) -> (!nat, !nat, !nat)
     "return"(%r) : (!nat) -> ()
 }]
@@ -82,16 +82,16 @@ def Mul' (n m : Nat) : Option Nat :=
 
 /-! ## The inner loop -/
 
-abbrev innerStep (st : HVector toType [N, N]) : Option (Nat × HVector toType [N, N]) :=
-  (inner.denote (Valuation.ofHVector (rev st))).map fun r => (r.head, r.tail)
+abbrev innerStep (st : HVector toType [N, N]) : Option (Bool × HVector toType [N, N]) :=
+  (inner.denote (Valuation.ofHVector (rev st))).map fun r => (Base.isTrue (d := Arith) r.head, r.tail)
 
 theorem innerStep_zero (acc : Nat) :
-    innerStep ((0 : Nat) ::ₕ (acc : Nat) ::ₕ .nil) = some (0, (0 : Nat) ::ₕ (acc : Nat) ::ₕ .nil) :=
+    innerStep ((0 : Nat) ::ₕ (acc : Nat) ::ₕ .nil) = some (false, (0 : Nat) ::ₕ (acc : Nat) ::ₕ .nil) :=
   rfl
 
 theorem innerStep_succ (j acc : Nat) :
     innerStep ((j + 1 : Nat) ::ₕ (acc : Nat) ::ₕ .nil) =
-      some (1, (j : Nat) ::ₕ (acc + 1 : Nat) ::ₕ .nil) :=
+      some (true, (j : Nat) ::ₕ (acc + 1 : Nat) ::ₕ .nil) :=
   rfl
 
 /-- The inner loop's invariant: `acc + j` is the final value. -/
@@ -112,9 +112,9 @@ theorem inner_loop (j acc : Nat) :
       rintro (_ | ⟨(j' : Nat), _ | ⟨(a : Nat), ⟨⟩⟩⟩) hP
       simp only [innerInv] at hP
       cases j' with
-      | zero => exact ⟨0, _, innerStep_zero a, fun _ => by rw [← hP]; rfl, by simp⟩
+      | zero => exact ⟨false, _, innerStep_zero a, fun _ => by rw [← hP]; rfl, by simp⟩
       | succ j' =>
-        refine ⟨1, _, innerStep_succ j' a, by simp, fun _ => ⟨?_, ?_⟩⟩
+        refine ⟨true, _, innerStep_succ j' a, by simp, fun _ => ⟨?_, ?_⟩⟩
         · simp only [innerInv]; omega
         · simp [innerMeasure])
     ((j : Nat) ::ₕ (acc : Nat) ::ₕ .nil) rfl
@@ -122,17 +122,17 @@ theorem inner_loop (j acc : Nat) :
 
 /-! ## The outer loop -/
 
-abbrev outerStep (st : HVector toType [N, N, N]) : Option (Nat × HVector toType [N, N, N]) :=
-  (outer.denote (Valuation.ofHVector (rev st))).map fun r => (r.head, r.tail)
+abbrev outerStep (st : HVector toType [N, N, N]) : Option (Bool × HVector toType [N, N, N]) :=
+  (outer.denote (Valuation.ofHVector (rev st))).map fun r => (Base.isTrue (d := Arith) r.head, r.tail)
 
 theorem outerStep_zero (m acc : Nat) :
     outerStep ((0 : Nat) ::ₕ (m : Nat) ::ₕ (acc : Nat) ::ₕ .nil) =
-      some (0, (0 : Nat) ::ₕ (m : Nat) ::ₕ (acc : Nat) ::ₕ .nil) :=
+      some (false, (0 : Nat) ::ₕ (m : Nat) ::ₕ (acc : Nat) ::ₕ .nil) :=
   rfl
 
 theorem outerStep_succ (i m acc : Nat) :
     outerStep ((i + 1 : Nat) ::ₕ (m : Nat) ::ₕ (acc : Nat) ::ₕ .nil) =
-      some (1, (i : Nat) ::ₕ (m : Nat) ::ₕ (acc + m : Nat) ::ₕ .nil) := by
+      some (true, (i : Nat) ::ₕ (m : Nat) ::ₕ (acc + m : Nat) ::ₕ .nil) := by
   unfold outerStep outer
   cf_reduce
   -- the inner loop, run as far as `cf_reduce` goes: still `innerStep`, up to unfolding
@@ -158,10 +158,10 @@ theorem outer_loop (i m acc : Nat) :
       obtain ⟨rfl, hP⟩ := hP
       cases i' with
       | zero =>
-        refine ⟨0, _, outerStep_zero m' a, fun _ => ?_, by simp⟩
+        refine ⟨false, _, outerStep_zero m' a, fun _ => ?_, by simp⟩
         simp only [Nat.zero_mul, Nat.add_zero] at hP; rw [← hP]
       | succ i' =>
-        refine ⟨1, _, outerStep_succ i' m' a, by simp, fun _ => ⟨⟨rfl, ?_⟩, ?_⟩⟩
+        refine ⟨true, _, outerStep_succ i' m' a, by simp, fun _ => ⟨⟨rfl, ?_⟩, ?_⟩⟩
         · rw [Nat.succ_mul] at hP; show a + m' + i' * m' = _; omega
         · simp [outerMeasure])
     ((i : Nat) ::ₕ (m : Nat) ::ₕ (acc : Nat) ::ₕ .nil) ⟨rfl, rfl⟩

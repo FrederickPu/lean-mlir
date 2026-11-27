@@ -6,35 +6,38 @@ import LeanMLIR.MLIRSyntax.Transform.Utils
 import LeanMLIR.RegionCf.Dialect
 
 /-!
-# Syntax for the `CF` dialect: `[cf| …]`
+# Syntax for `RegionCf d`
 
 Programs in MLIR's generic syntax, through LeanMLIR's generic parser (`mlir_region`),
-`DialectParse`, and `SSA.elabIntoCom'`:
+`DialectParse`, and `SSA.elabIntoCom'`, for any base dialect `d` that has a `DialectParse`:
 
 ```
-[cf| {
+{
   ^bb0(%n : !nat):
-    %c0 = "cf.cst"() {value = 0} : () -> (!nat)
-    %z = "cf.eqz"(%n) : (!nat) -> (!nat)
-    %r = "cf.ite"(%z, %n) ({
-      ^bb0(%m : !nat):
-        "return"(%c0) : (!nat) -> ()       -- error: regions see no outer names
-    }, { … }) : (!nat, !nat) -> (!nat)
+    %c0 = "arith.cst"() {value = 0} : () -> (!nat)          -- an op of `d`
+    %r = "cf.while"(%n) ({
+      ^bb0(%k : !nat):
+        …
+        "return"(%flag, %k') : (!nat, !nat) -> ()
+    }) : (!nat) -> (!nat)
     "return"(%r) : (!nat) -> ()
-}]
+}
 ```
 
-* Types: `!nat`, and `!fn_n_m` for `fn n m`.
-* Ops: `"cf.cst"` (attribute `value`), `"cf.add"`, `"cf.sub"`, `"cf.mul"`, `"cf.eqz"`,
-  `"cf.ite"`, `"cf.while"`, `"cf.funcs"`, `"cf.call"`; `"return"` ends a region.
+* Types: `d`'s types, and `!fn` for a function value.
+* Ops: `"cf.ite"`, `"cf.while"`, `"cf.funcs"`, `"cf.call"`; any other op is parsed by `d`'s
+  parser (on a context of its operands) and becomes `coe`. `"return"` ends a region.
 * The ops' parameters are read off their operands, results and regions:
   - `"cf.ite"(%c, %xs…) ({then}, {else}) : … -> (rs…)`: `ite ts rs`, `ts` the types of `%xs`;
   - `"cf.while"(%xs…) ({body})`: `while ts`;
-  - `"cf.funcs"(%xs…) ({main}, {f₀}, …, {fₖ}) : … -> (rs…)`: the signatures are the types
-    of the first `k + 1` block arguments of `main` (one `!fn_n_m` per function);
-  - `"cf.call"(%f, %xs…)`: `call n m`, from the type `!fn_n_m` of `%f`.
+  - `"cf.funcs"(%xs…) ({main}, {f₀}, …, {fₖ}) : … -> (rs…)`: function `fᵢ`'s signature is its
+    region's block arguments after the `k + 1` functions, and the types of its `return`;
+  - `"cf.call"(%f, %xs…) : … -> (us…)`: `call ts us`.
 * Regions are isolated from above: a region sees only its block arguments. Each is parsed
   as a program of its own (`mkCom`), through the generic `Op.mkExprWithRegions`.
+
+A dialect `RegionCf d` gets its `[…| …]` elaborator from `SSA.elabIntoCom'` (see
+`RegionCf/Arith.lean`), and `elabRegion` for a region on its own.
 -/
 
 open Lean Qq
@@ -46,99 +49,111 @@ namespace RegionCfFunctor
 deriving instance Lean.ToExpr for Ty
 deriving instance Lean.ToExpr for Op
 
-instance : DialectToExpr CF where
-  toExprDialect := .const ``CF []
-  toExprM := .const ``Option [0]
-
-instance : ToString Ty where
+instance {T : Type} [ToString T] : ToString (Ty T) where
   toString
-    | .nat => "!nat"
-    | .fn n m => s!"!fn_{n}_{m}"
+    | .base t => toString t
+    | .fn => "!fn"
+
+variable {d : Dialect} [TyDenote d.Ty] [DialectSignature d] [Base d]
+  [DecidableEq d.Ty] [DecidableEq d.Op] [ToString d.Ty] [Repr d.Ty]
+
+instance : ToString (RegionCf d).Ty := inferInstanceAs (ToString (Ty d.Ty))
+instance : Repr (RegionCf d).Ty := inferInstanceAs (Repr (Ty d.Ty))
+
+instance [ToExpr d.Op] [ToExpr d.Ty] : ToExpr (RegionCf d).Op := inferInstanceAs (ToExpr (Op d.Op d.Ty))
+instance [ToExpr d.Ty] : ToExpr (RegionCf d).Ty := inferInstanceAs (ToExpr (Ty d.Ty))
+
+instance [ToExpr d.Op] [ToExpr d.Ty] [DialectToExpr d] : DialectToExpr (RegionCf d) where
+  toExprDialect := mkApp (.const ``RegionCf []) (DialectToExpr.toExprDialect d)
+  toExprM := .const ``Option [0]
 
 /-! ## Types -/
 
-/-- `!nat`, and `!fn_n_m`. -/
-def mkTy : MLIRType 0 → ExceptM CF Ty
-  | .undefined "nat" => return .nat
-  | .undefined s => do
-    let err := TransformError.generic s!"Unknown type `!{s}`: expected `!nat` or `!fn_n_m`"
-    match s.splitOn "_" with
-    | ["fn", n, m] =>
-      match n.toNat?, m.toNat? with
-      | some n, some m => return .fn n m
-      | _, _ => throw err
-    | _ => throw err
-  | ty => throw <| TransformError.generic s!"Unknown type `{repr ty}`: expected `!nat` or `!fn_n_m`"
+variable [LeanMLIR.DialectParse d 0]
 
-instance : TransformTy CF 0 where
+/-- `!fn`, and `d`'s types. -/
+def mkTy : MLIRType 0 → ExceptM (RegionCf d) (Ty d.Ty)
+  | .undefined "fn" => return .fn
+  | ty => return .base (← (TransformTy.mkTy (d := d) ty : ExceptM d d.Ty))
+
+instance : TransformTy (RegionCf d) 0 where
   mkTy := mkTy
+
+/-- Base types (of `d`), or an error. -/
+def unbaseTys (what : String) : List (Ty d.Ty) → ExceptM (RegionCf d) (List d.Ty)
+  | [] => return []
+  | .base t :: ts => return t :: (← unbaseTys what ts)
+  | .fn :: _ => throw <| TransformError.generic s!"{what}: expected a value of the base dialect, found a function"
 
 /-! ## Ops -/
 
-def isValidReturn (_ : Ctxt Ty) (opStx : MLIR.AST.Op 0) : ReaderM CF Bool :=
+def isValidReturn (_ : Ctxt (Ty d.Ty)) (opStx : MLIR.AST.Op 0) : ReaderM (RegionCf d) Bool :=
   return opStx.name == "return" || opStx.name == "cf.return"
 
-/-- The signatures of a group of functions: the types of its first block arguments. -/
-def mkSigs : List Ty → ExceptM CF (List (Nat × Nat))
-  | [] => return []
-  | .fn n m :: ts => return (n, m) :: (← mkSigs ts)
-  | t :: _ => throw <| TransformError.generic s!"`cf.funcs`: expected a function type, found `{t}`"
+/-- The signature of a function of a group, from its region: its block arguments after the
+group's `k` functions, and the types its `return` returns. -/
+def mkSig (k : Nat) (r : Region 0) : ExceptM (RegionCf d) (List d.Ty × List d.Ty) := do
+  let args ← (r.args.drop k).mapM (TypedSSAVal.mkTy (d := RegionCf d))
+  let some ret := r.ops.getLast?
+    | throw <| TransformError.generic s!"`cf.funcs`: function region `{r.name}` is empty"
+  let rets ← ret.args.mapM (TypedSSAVal.mkTy (d := RegionCf d))
+  return (← unbaseTys "`cf.funcs`" args, ← unbaseTys "`cf.funcs`" rets)
+
+/-- An op of `d`: parsed by `d`'s parser, on a context of the op's operands. -/
+def mkBaseOp (opStx : MLIR.AST.Op 0) (argTys : List (Ty d.Ty)) : ExceptM (RegionCf d) d.Op := do
+  let tys ← unbaseTys s!"`{opStx.name}`" argTys
+  let names := opStx.args.map fun (v, _) => SSAValToString v
+  let ⟨_, _, e⟩ ← (LeanMLIR.DialectParse.mkExpr (d := d) ⟨tys⟩ opStx |>.run names : ExceptM d _)
+  return e.op
 
 /-- Parse an op; its regions are parsed as programs of their own. -/
-partial def mkExpr (Γ : Ctxt Ty) (opStx : MLIR.AST.Op 0) : ReaderM CF (Σ eff ty, Expr CF Γ eff ty) := do
-  let _ : LeanMLIR.DialectParse CF 0 :=
-    { mkTy := RegionCfFunctor.mkTy, isValidReturn := isValidReturn, mkExpr := fun Γ op => mkExpr Γ op }
-  let mkRegion : Region 0 → ExceptM CF (Σ Γ eff ty, Com CF Γ eff ty) := mkCom
+partial def mkExpr (Γ : Ctxt (Ty d.Ty)) (opStx : MLIR.AST.Op 0) :
+    ReaderM (RegionCf d) (Σ eff ty, Expr (RegionCf d) Γ eff ty) := do
+  let _ : LeanMLIR.DialectParse (RegionCf d) 0 :=
+    { mkTy := mkTy, isValidReturn := isValidReturn, mkExpr := fun Γ op => mkExpr Γ op }
+  let mkRegion : Region 0 → ExceptM (RegionCf d) (Σ Γ eff ty, Com (RegionCf d) Γ eff ty) := mkCom
   let args ← opStx.parseArgs Γ
-  let resTys ← (opStx.res.mapM (TypedSSAVal.mkTy (d := CF)) : ExceptM CF _)
-  let plain (op : Op) := opStx.mkExprOf (d := CF) Γ op (some args)
-  let region (op : Op) := opStx.mkExprWithRegions (d := CF) Γ op mkRegion (some args)
+  let resTys ← (opStx.res.mapM (TypedSSAVal.mkTy (d := RegionCf d)) : ExceptM (RegionCf d) _)
+  let region (op : (RegionCf d).Op) :=
+    opStx.mkExprWithRegions (d := RegionCf d) Γ op mkRegion (some args)
   match opStx.name with
-  | "cf.cst" =>
-    let (k, _) ← opStx.getIntAttr "value"
-    if k < 0 then throw <| TransformError.generic s!"`cf.cst`: expected a natural number, found {k}"
-    plain (.cst k.toNat)
-  | "cf.add" => plain .add
-  | "cf.sub" => plain .sub
-  | "cf.mul" => plain .mul
-  | "cf.eqz" => plain .eqz
   | "cf.ite" => region (.ite args.types.tail resTys)
   | "cf.while" => region (.while args.types)
   | "cf.funcs" =>
-    let some main := opStx.regions.head?
-      | throw <| TransformError.generic "`cf.funcs`: expected a main region"
-    let fnTys ← ((main.args.take (opStx.regions.length - 1)).mapM (TypedSSAVal.mkTy (d := CF)) :
-      ExceptM CF _)
-    region (.funcs (← mkSigs fnTys) args.types resTys)
+    let k := opStx.regions.length - 1
+    let sigs ← ((opStx.regions.drop 1).mapM (mkSig k) : ExceptM (RegionCf d) _)
+    region (.funcs sigs args.types resTys)
   | "cf.call" =>
     match args.types with
-    | .fn n m :: _ => region (.call n m)
+    | .fn :: ts =>
+      region (.call (← unbaseTys "`cf.call`" ts) (← unbaseTys "`cf.call`" resTys))
     | _ => throw <| TransformError.generic "`cf.call`: expected a function as the first operand"
-  | name => throw <| TransformError.unsupportedOp s!"Unknown op `{name}`"
+  | _ => opStx.mkExprOf (d := RegionCf d) Γ (.coe (← mkBaseOp opStx args.types)) (some args)
 
-instance : LeanMLIR.DialectParse CF 0 where
-  mkTy := RegionCfFunctor.mkTy
+instance : LeanMLIR.DialectParse (RegionCf d) 0 where
+  mkTy := mkTy
   isValidReturn := isValidReturn
   mkExpr := mkExpr
 
 /-! ## Printing -/
 
-instance : DialectPrint CF where
+instance [DialectPrint d] : DialectPrint (RegionCf d) where
   printOpName
-    | .cst _ => "cf.cst" | .add => "cf.add" | .sub => "cf.sub" | .mul => "cf.mul"
-    | .eqz => "cf.eqz" | .ite .. => "cf.ite" | .while _ => "cf.while"
+    | .coe o => DialectPrint.printOpName (d := d) o
+    | .ite .. => "cf.ite" | .while _ => "cf.while"
     | .funcs .. => "cf.funcs" | .call .. => "cf.call"
-  printTy := toString
+  printTy
+    | .base t => DialectPrint.printTy (d := d) t
+    | .fn => "!fn"
   printAttributes
-    | .cst k => s!"\{value = {k}}"
+    | .coe o => DialectPrint.printAttributes (d := d) o
     | _ => ""
   dialectName := "cf"
   printReturn _ := "return"
 
-/-- `[cf| { ^bb0(%x : !nat, …): … }]`: a `CF` program, in MLIR's generic syntax. -/
-elab "[cf| " reg:mlir_region "]" : term => SSA.elabIntoCom' reg CF
+/-! ## Elaboration -/
 
-/-- `[cf_region| { … }]`: a `CF` program of effect `.impure`, as it is when a region of an op.
+/-- A region on its own: a program of effect `.impure`, as it is when a region of an op.
 
 To prove things about a region on its own, define its syntax once and splice it in:
 ```
@@ -147,8 +162,9 @@ def body := [cf_region| $(bodyAst)]                       -- the region, to stat
 def prog := [cf| { … "cf.while"(…) ($(bodyAst)) … }]      -- the program using it
 ```
 Both are elaborated from the same syntax, so `body` is exactly the region in `prog`. -/
-elab "[cf_region| " reg:mlir_region "]" : term => do
-  let ⟨_, eff, _, com⟩ ← SSA.elabIntoComObj reg CF
+def elabRegion [ToExpr d.Op] [ToExpr d.Ty] [DialectToExpr d] (reg : TSyntax `mlir_region) :
+    Elab.TermElabM Lean.Expr := do
+  let ⟨_, eff, _, com⟩ ← SSA.elabIntoComObj reg (RegionCf d)
   (com.changeEffect (EffectKind.le_impure eff)).toExprM
 
 end RegionCfFunctor

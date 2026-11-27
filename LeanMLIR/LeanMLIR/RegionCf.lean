@@ -7,6 +7,8 @@ import LeanMLIR.RegionCf.Dialect
 import LeanMLIR.RegionCf.Mono
 import LeanMLIR.RegionCf.Simp
 import LeanMLIR.RegionCf.Syntax
+-- The base dialect of the examples.
+import LeanMLIR.RegionCf.Arith
 -- Worked examples.
 import LeanMLIR.RegionCf.MutualRec
 import LeanMLIR.RegionCf.Loop
