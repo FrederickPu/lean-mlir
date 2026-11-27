@@ -121,10 +121,7 @@ theorem fBody_denote (fv gv : List Nat → Option (List Nat)) (n : Nat) :
   cases n with
   | zero => rfl
   | succ n =>
-    cf_reduce
-    simp only [Option.bind_assoc, Nat.add_sub_cancel]
-    cf_reduce
-    simp only [Option.bind_map, Option.map_bind, Option.bind_assoc, Function.comp_def]
+    cf_simp
     congr 1; funext r
     rcases ofNats 1 r with _ | (_ | ⟨x, xs⟩)
     · rfl
@@ -139,10 +136,7 @@ theorem gBody_denote (fv gv : List Nat → Option (List Nat)) (n : Nat) :
   cases n with
   | zero => rfl
   | succ n =>
-    cf_reduce
-    simp only [Option.bind_assoc, Nat.add_sub_cancel]
-    cf_reduce
-    simp only [Option.bind_map, Option.map_bind, Option.bind_assoc, Function.comp_def]
+    cf_simp
     congr 1; funext r
     rcases ofNats 1 r with _ | (_ | ⟨x, xs⟩)
     · rfl

@@ -138,3 +138,13 @@ elab "cf_reduce" : tactic => withMainContext do
     if t' == t then break
     t := t'
   replaceMainGoal [← g.replaceTargetDefEq t]
+
+/-- `cf_reduce`, then normalize the binds it leaves at what is unknown (a call to an unknown
+function, a `match` on its result): reassociate them, push the `.map`s of multi-result
+ops through, and reduce again. Repeated twice, as normalizing can expose more to reduce. -/
+macro "cf_simp" : tactic => `(tactic| (
+  iterate 2
+    cf_reduce
+    try simp only [Option.bind_assoc, Option.bind_map, Option.map_bind, Option.map_map,
+      Function.comp_def, Nat.add_sub_cancel]
+  cf_reduce))

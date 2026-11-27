@@ -122,4 +122,44 @@ theorem Fib'_eq (n : Nat) : Fib' n = some (fib n) := by
   simp only [fib, Nat.add_zero] at this
   rw [this]
 
+/-! ## A loop that never stops
+
+```
+while { continue (n + 1) }
+```
+
+has no value (`Option`'s `none`), by `whileLoop_diverges`. -/
+
+def spinAst : Region 0 := [mlir_region| {
+  ^bb0(%n : !nat):
+    %one = "cf.cst"() {value = 1} : () -> (!nat)
+    %m = "cf.add"(%n, %one) : (!nat, !nat) -> (!nat)
+    "return"(%one, %m) : (!nat, !nat) -> ()
+}]
+
+def spinBody := [cf_region| $(spinAst)]
+
+def spin := [cf| {
+  ^bb0(%n : !nat):
+    %r = "cf.while"(%n) ($(spinAst)) : (!nat) -> (!nat)
+    "return"(%r) : (!nat) -> ()
+}]
+
+abbrev spinStep (st : HVector toType [N]) : Option (Nat × HVector toType [N]) :=
+  (spinBody.denote (Valuation.ofHVector (rev st))).map fun r => (r.head, r.tail)
+
+theorem spinStep_eq (n : Nat) :
+    spinStep ((n : Nat) ::ₕ .nil) = some (1, (n + 1 : Nat) ::ₕ .nil) :=
+  rfl
+
+/-- **`spin` does not terminate.** -/
+theorem spin_none (n : Nat) : spin.denote (Valuation.ofHVector ((n : Nat) ::ₕ .nil)) = none := by
+  have h := whileLoop_diverges spinStep (fun _ => True)
+    (by rintro (_ | ⟨(k : Nat), ⟨⟩⟩) -; exact ⟨1, _, spinStep_eq k, by decide, trivial⟩)
+    ((n : Nat) ::ₕ .nil) trivial
+  unfold spin
+  cf_reduce
+  erw [h]
+  rfl
+
 end RegionCF.Loop

@@ -11,7 +11,7 @@ Status: everything below builds with no errors, warnings or `sorry`, on branch `
 
 ```sh
 cd LeanMLIR
-timeout 600 lake build LeanMLIR.RegionCF.Loop LeanMLIR.RegionCF.MutualRec   # every module below
+timeout 900 lake build LeanMLIR.RegionCF      # every module below (LeanMLIR/RegionCF.lean)
 timeout 300 lake env lean --memory=4096 --threads=2 SomeScratch.lean
 ```
 
@@ -32,13 +32,18 @@ is marked out of date in its own header.
 
 | File | What it is |
 |---|---|
-| `Fix.lean` | The fixpoints. `whileLoop` (via `partial_fixpoint`) and `whileLoop_unfold`. `FnTable := Nat → List Nat → Option (List Nat)`. `funcsFix F` is the least fixpoint, defined with `Lean.Order.fix` when `F` is monotone (a classical `if`) and `implemented_by` a `partial def` so programs still run. `funcsFix_unfold (h : monotone F)`. |
+| `Fix.lean` | The fixpoints. `whileLoop` (via `partial_fixpoint`) and `whileLoop_unfold`. `FnTable := Nat → List Nat → Option (List Nat)`. `funcsFix F` is the least fixpoint, defined with `Lean.Order.fix` when `F` is monotone (a classical `if`) and `implemented_by` a `partial def` so programs still run. `funcsFix_unfold (h : monotone F)`. **`whileLoop_inv`**: a loop with an invariant and a decreasing measure stops, in a state satisfying a postcondition. **`whileLoop_diverges`**: a loop that always continues from an invariant has no value (`none`). |
 | `Dialect.lean` | The `CF` dialect, with monad `Option`, following LeanMLIR's binder order (see below). Types: `nat` and `fn n m` (denoted as `List Nat → Option (List Nat)`). Ops: `cst add sub mul eqz` (pure); `ite ts rs`, `while ts`, `funcs sigs ts rs`, `call n m` (impure). Helpers `toNats`, `ofNats`, `fnVals`, `bodies`, `rev` (an `HVector` reversed, `rfl`-typed via `revAux`). Simp lemmas `denote_*` and `effectKind_*`, one per op. |
 | `Syntax.lean` | **`[cf| …]`**: programs in MLIR's generic syntax, through LeanMLIR's generic parser, `DialectParse`, `SSA.elabIntoCom'`. Also `[cf_region| …]` (a region on its own, effect `.impure`), `ToExpr`, `DialectToExpr`, and a `DialectPrint` (so `#eval prog` prints it back). |
-| `Simp.lean` | Lookup lemmas for literal variable indices, and the **`cf_reduce`** tactic. |
+| `Simp.lean` | Lookup lemmas for literal variable indices, the **`cf_reduce`** tactic, and **`cf_simp`** (`cf_reduce` plus the `Option` bind/map normalization it leaves to do). |
 | `Mono.lean` | **The general monotonicity theorem**, `funcsFix_bodies_unfold`, and the per-function equation `funcsFix_apply` with simp lemmas `bodies_zero`/`bodies_succ`, `ofNats_*`, `toNats_*`, `fnVals_*`. |
 | `MutualRec.lean` | Worked example, written in `[cf| …]`: `funcs { f; g } in f(n)`, proved equal to a Lean `mutual` definition. |
 | `Loop.lean` | Worked example, written in `[cf| …]`: Fibonacci as a `while` whose body is an `ite` (continue, or break with flag `0`), proved equal to a Lean `fib`. |
+| `Nested.lean` | Worked example: `n * m` by a loop nested in a loop (the outer body runs the inner `while`), proved with `whileLoop_inv` for each loop. |
+| `FuncLoop.lean` | Worked example: `funcs { sq; sumsq }` where `sumsq`'s body is a loop that calls `sq` (passed in the loop state), proved equal to `1² + … + n²`. |
+
+`Loop.lean` also has `spin`, a loop that never breaks, and `spin_none` (by `whileLoop_diverges`).
+`LeanMLIR/RegionCF.lean` imports everything, and the root `LeanMLIR.lean` imports it.
 
 Shared code added or fixed for this (outside `RegionCF/`):
 - `MLIRSyntax/Transform/Utils.lean`: `Op.mkRegions` and `Op.mkExprWithRegions`, the generic
@@ -125,6 +130,21 @@ reversed (`.map rev`, result types `rs.reverse`). Hand-written programs must fol
      `(0, iter n a b, _)`.
   3. `Fib'_eq`: `cf_reduce` reduces `prog` up to the `whileLoop`, `erw [loop …]`, then
      `cf_reduce` again and `iter_fib`.
+- **`Mul'_eq`** (`Nested.lean`): `Mul' n m = some (n * m)`. The proof pattern for nested loops:
+  1. Step lemmas per loop, split into a zero and a successor case (`innerStep_zero`/`_succ`),
+     each by `rfl`, except the outer successor step, which runs the inner loop:
+     `cf_reduce`, `erw [inner_loop …]`, `rfl`.
+  2. Each loop by `whileLoop_inv`, with the invariant and measure defined by pattern
+     matching on the state vector (`innerInv`, `innerMeasure`): stating them with
+     `st.head`/`st.tail.head` leaves `match` terms that `omega` cannot see through.
+  3. `Mul'_eq`: `cf_reduce`, `erw [outer_loop …]`, `cf_reduce`, `simp`.
+- **`Sumsq'_eq`** (`FuncLoop.lean`): a loop calling a function, inside a function.
+  1. The loop is proved for *any* function value `fv` with `IsSq fv` (`∀ i, fv [i] = some
+     [i * i]`): in `step_succ`, `cf_reduce` stops at the call `fv [i + 1]`, `rw [hf]`, `rfl`.
+     The invariant also says the function in the state stays `fv`.
+  2. `T_sq : IsSq (T 0)` by `funcsFix_apply` and `rfl`; `T_sumsq` by `funcsFix_apply`, then
+     the body: `cf_reduce`, `erw [loop (T 0) T_sq n 0]`, `cf_reduce`, `simp`.
+  3. `Sumsq'_eq`: `cf_reduce`, then `erw` with `T_sumsq` restated with `funcsFix` as its head.
 
 ## `cf_reduce` (Simp.lean)
 
@@ -162,21 +182,26 @@ Pitfalls found along the way:
 
 ## Remaining work
 
-0. **Syntax polish.** Only MLIR's generic op syntax (`"cf.add"(%a, %b) : (…) -> (…)`) is
-   supported; a custom pretty syntax (as for LLVM's `llvm.add %a, %b : i64`) would be shorter.
-   Constants need `{value = k}`. The framework's reversed result binding also means a
-   multi-result op whose result types differ would not typecheck in syntax unless the
-   dialect reverses its results, as CF does.
+Finished: syntax, all four nestings (loop in loop, loop in function, call in loop, recursion),
+termination (`whileLoop_inv`) and divergence (`whileLoop_diverges`) lemmas, `cf_simp`. Open:
 
-1. **Nested loops.** `Loop.lean` has a single loop. Not yet tried: a loop nested in a loop,
-   a loop inside a `funcs` body, or a `call` inside a loop body (functions must be threaded
-   through the state).
-2. **Generic loop lemma.** `loop` is proved by hand. A reusable lemma could state:
-   if a step relation is an invariant and a measure decreases, then `whileLoop` ends in a
-   state satisfying the invariant with flag `0`.
-3. **Harden `cf_reduce`.** Try it on larger and nested programs. Consider making it a
-   `simp` pre-pass or `dsimproc`, and folding the `Option.bind_assoc` step in.
-4. **Generality.** Values are only `nat` and `fn` over number lists. A reusable version
-   would parameterize over a base dialect or value type.
+1. **Generality (a redesign).** Values are only `nat` and `fn` over number lists. A reusable
+   version would parameterize over a base dialect, as upstream's
+   `SSA/Projects/Scf/ScfFunctor.lean` does (`Scf d` wraps a dialect `d` with `coe`, and
+   `HasBool`/`HasInt` pick out its types). That `scf` uses the same region-op mechanism, but
+   only for terminating loops (`iterate k`, `for` with a fixed count), with one value per
+   region and no functions. Function values (`fn n m`) would need to range over the base
+   dialect's types, so `toNats`/`ofNats`/`fnVals` and `Mono.lean`'s order generalize too.
+2. **Proof ergonomics.** Every proof needs `erw` after `cf_reduce`, because `cf_reduce` also
+   reduces inside loop and function bodies (so they no longer match `step`, `fBody`, …
+   syntactically). A `cf_reduce` that leaves the arguments of `whileLoop`/`funcsFix` alone
+   would make plain `rw` work. Step lemmas per loop are still written by hand.
+3. **Syntax polish (optional).** Only MLIR's generic op syntax (`"cf.add"(%a, %b) : (…) ->
+   (…)`) is supported; a custom short syntax (as for LLVM's `llvm.add %a, %b : i64`) would
+   be macros onto the same AST. The framework's reversed result binding also means a
+   multi-result op whose result types differ does not typecheck in syntax unless the
+   dialect reverses its results, as CF does (worth reporting upstream).
+4. **Upstreaming.** `Prod.foldToExpr` (bug fix) and `Op.mkRegions`/`Op.mkExprWithRegions`
+   (generic region parsing) are independent of RegionCF and could go to `main` on their own.
 5. Old BlockIR files from an earlier design exist in the repo but are unused; don't confuse
    them with this work.
