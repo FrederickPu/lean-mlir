@@ -165,10 +165,31 @@ theorem HVLe.append : {as bs : List Ty} → {xs xs' : HVector toType as} →
   | [], _, .nil, .nil, _, _, _, h => h
   | _ :: _, _, .cons _ _, .cons _ _, _, _, .cons h hs, h' => .cons h (HVLe.append hs h')
 
+theorem HVLe.revAux : {as bs : List Ty} → {xs xs' : HVector toType as} →
+    {ys ys' : HVector toType bs} → HVLe xs xs' → HVLe ys ys' →
+      HVLe (RegionCF.revAux xs ys) (RegionCF.revAux xs' ys')
+  | [], _, .nil, .nil, _, _, _, h => h
+  | a :: as, bs, .cons _ _, .cons _ _, _, _, .cons h hs, h' =>
+    HVLe.revAux (as := as) (bs := a :: bs) hs (.cons h h')
+
+/-- Vectors reversed. -/
+theorem HVLe.rev {ts : List Ty} {xs xs' : HVector toType ts} (h : HVLe xs xs') :
+    HVLe (rev xs) (rev xs') :=
+  HVLe.revAux h .nil
+
+/-- Results reversed. -/
+theorem OptLe.map_rev {ts : List Ty} {a a' : Option (HVector toType ts)} (h : OptLe HVLe a a') :
+    OptLe HVLe (a.map rev) (a'.map rev) := by
+  rcases a with _ | x <;> rcases a' with _ | x'
+  · trivial
+  · trivial
+  · exact h.elim
+  · exact HVLe.rev h
+
 /-- **A group of functions is monotone in the functions it calls**, if its bodies are. -/
 theorem bodies_monotone (sigs₀ : List (Nat × Nat)) : (sigs : List (Nat × Nat)) →
     (rs : HVector (fun t : Ctxt Ty × List Ty => t.1.Valuation → Option (HVector toType t.2))
-      (sigs.map fun (n, m) => (⟨fnTys sigs₀ ++ nats n⟩, nats m))) → RegsMono rs →
+      (sigs.map fun (n, m) => (⟨(fnTys sigs₀ ++ nats n).reverse⟩, nats m))) → RegsMono rs →
     monotone fun T => bodies sigs₀ T sigs rs
   | [], .nil, _ => fun _ _ _ => PartialOrder.rel_refl
   | (n, m) :: sigs, .cons r rs, .cons hr hrs => by
@@ -177,16 +198,16 @@ theorem bodies_monotone (sigs₀ : List (Nat × Nat)) : (sigs : List (Nat × Nat
     split
     · refine OptLe.to_rel (OptLe.bind (OptLe.refl (fun _ => rfl) _) ?_)
       rintro ys _ rfl
-      have := hr _ _ (VLe.ofHVector (ts := fnTys sigs₀ ++ nats n)
-        (xs := fnVals T sigs₀ ++ ys) (ys := fnVals T' sigs₀ ++ ys) ?_)
-      · rcases hv : r (Valuation.ofHVector (fnVals T sigs₀ ++ ys)) with _ | a <;>
-          rcases hv' : r (Valuation.ofHVector (fnVals T' sigs₀ ++ ys)) with _ | a' <;>
+      have := hr _ _ (VLe.ofHVector (ts := (fnTys sigs₀ ++ nats n).reverse)
+        (xs := rev (fnVals T sigs₀ ++ ys)) (ys := rev (fnVals T' sigs₀ ++ ys)) ?_)
+      · rcases hv : r (Valuation.ofHVector (rev (fnVals T sigs₀ ++ ys))) with _ | a <;>
+          rcases hv' : r (Valuation.ofHVector (rev (fnVals T' sigs₀ ++ ys))) with _ | a' <;>
           rw [hv, hv'] at this
         · trivial
         · trivial
         · cases this
         · exact congrArg toNats (HVLe.nats_eq this)
-      · exact HVLe.append (fnVals_le h sigs₀ 0) (HVLe.refl ys)
+      · exact HVLe.rev (HVLe.append (fnVals_le h sigs₀ 0) (HVLe.refl ys))
     · exact bodies_monotone sigs₀ sigs rs hrs T T' h (i - 1) xs
 
 /-- **Every op respects the order**: arguments below give results below, for monotone
@@ -212,19 +233,20 @@ theorem denote_mono (op : Op) (heff : DialectSignature.effectKind (d := CF) op �
     obtain _ | ⟨rfl, hxy⟩ := hxy
     rcases rs with _ | ⟨thn, _ | ⟨els, ⟨⟩⟩⟩
     obtain _ | ⟨hthn, _ | ⟨hels, -⟩⟩ := hrs
+    refine OptLe.map_rev ?_
     change OptLe HVLe (if (show Nat from c) ≠ 0 then _ else _) (if (show Nat from c) ≠ 0 then _ else _)
     split
-    · exact hthn _ _ (VLe.ofHVector hxy)
-    · exact hels _ _ (VLe.ofHVector hxy)
+    · exact hthn _ _ (VLe.ofHVector (HVLe.rev hxy))
+    · exact hels _ _ (VLe.ofHVector (HVLe.rev hxy))
   | «while» ts =>
     rcases rs with _ | ⟨body, ⟨⟩⟩
     obtain _ | ⟨hbody, -⟩ := hrs
-    refine whileLoop_rel HVLe _ ?_ xs ys hxy
+    refine OptLe.map_rev (whileLoop_rel HVLe _ ?_ xs ys hxy)
     intro st st' hst
-    have := hbody _ _ (VLe.ofHVector hst)
+    have := hbody _ _ (VLe.ofHVector (HVLe.rev hst))
     revert this
-    rcases body (Valuation.ofHVector st) with _ | r <;>
-      rcases body (Valuation.ofHVector st') with _ | r' <;> intro this
+    rcases body (Valuation.ofHVector (rev st)) with _ | r <;>
+      rcases body (Valuation.ofHVector (rev st')) with _ | r' <;> intro this
     · trivial
     · trivial
     · exact this.elim
@@ -233,12 +255,12 @@ theorem denote_mono (op : Op) (heff : DialectSignature.effectKind (d := CF) op �
   | funcs sigs ts rs' =>
     rcases rs with _ | ⟨main, regs⟩
     obtain _ | ⟨hmain, -⟩ := hrs
-    exact hmain _ _ (VLe.ofHVector (HVLe.append (HVLe.refl _) hxy))
+    exact OptLe.map_rev (hmain _ _ (VLe.ofHVector (HVLe.rev (HVLe.append (HVLe.refl _) hxy))))
   | call n m =>
     rcases xs with _ | ⟨f, xs⟩; rcases ys with _ | ⟨f', ys⟩
     obtain _ | ⟨hf, hxy⟩ := hxy
     cases HVLe.nats_eq hxy
-    exact OptLe.ofNats m (hf _)
+    exact OptLe.map_rev (OptLe.ofNats m (hf _))
 
 /-! ## Every program respects the order -/
 
@@ -281,7 +303,7 @@ end
 is its bodies, calling the table. -/
 theorem funcsFix_bodies_unfold (sigs : List (Nat × Nat))
     (regs : HVector (fun t : Ctxt Ty × List Ty => _root_.Com CF t.1 .impure t.2)
-      (sigs.map fun (n, m) => (⟨fnTys sigs ++ nats n⟩, nats m))) :
+      (sigs.map fun (n, m) => (⟨(fnTys sigs ++ nats n).reverse⟩, nats m))) :
     funcsFix (fun T => bodies sigs T sigs (HVector.denote (d := CF) regs)) =
       bodies sigs (funcsFix fun T => bodies sigs T sigs (HVector.denote (d := CF) regs)) sigs (HVector.denote (d := CF) regs) :=
   funcsFix_unfold (bodies_monotone sigs sigs _ (HVector.denote_mono regs))
@@ -293,16 +315,17 @@ out that function's body. Together, for any group and any `i` with body `rᵢ` t
 numbers: `T i xs = (ofNats n xs).bind fun ys => (rᵢ (fnVals T sigs ++ ys)).map toNats`. -/
 
 @[simp] theorem bodies_zero (sigs₀ : List (Nat × Nat)) (T : FnTable) (n m : Nat)
-    (sigs : List (Nat × Nat)) (r : RegFn (⟨fnTys sigs₀ ++ nats n⟩, nats m))
-    (rs : HVector RegFn (sigs.map fun (n, m) => (⟨fnTys sigs₀ ++ nats n⟩, nats m)))
+    (sigs : List (Nat × Nat)) (r : RegFn (⟨(fnTys sigs₀ ++ nats n).reverse⟩, nats m))
+    (rs : HVector RegFn (sigs.map fun (n, m) => (⟨(fnTys sigs₀ ++ nats n).reverse⟩, nats m)))
     (xs : List Nat) :
     bodies sigs₀ T ((n, m) :: sigs) (.cons r rs) 0 xs =
-      (ofNats n xs).bind fun ys => (r (Valuation.ofHVector (fnVals T sigs₀ ++ ys))).map toNats :=
+      (ofNats n xs).bind fun ys =>
+        (r (Valuation.ofHVector (rev (fnVals T sigs₀ ++ ys)))).map toNats :=
   rfl
 
 @[simp] theorem bodies_succ (sigs₀ : List (Nat × Nat)) (T : FnTable) (n m : Nat)
-    (sigs : List (Nat × Nat)) (r : RegFn (⟨fnTys sigs₀ ++ nats n⟩, nats m))
-    (rs : HVector RegFn (sigs.map fun (n, m) => (⟨fnTys sigs₀ ++ nats n⟩, nats m)))
+    (sigs : List (Nat × Nat)) (r : RegFn (⟨(fnTys sigs₀ ++ nats n).reverse⟩, nats m))
+    (rs : HVector RegFn (sigs.map fun (n, m) => (⟨(fnTys sigs₀ ++ nats n).reverse⟩, nats m)))
     (i : Nat) (xs : List Nat) :
     bodies sigs₀ T ((n, m) :: sigs) (.cons r rs) (i + 1) xs = bodies sigs₀ T sigs rs i xs := by
   simp [bodies]
@@ -320,7 +343,7 @@ numbers: `T i xs = (ofNats n xs).bind fun ys => (rᵢ (fnVals T sigs ++ ys)).map
 /-- **One function of a group, unfolded once**: for monotone bodies (every program's are,
 `HVector.denote_mono`), the table at `i` is body `i` calling the table. -/
 theorem funcsFix_apply (sigs : List (Nat × Nat))
-    (rs : HVector RegFn (sigs.map fun (n, m) => (⟨fnTys sigs ++ nats n⟩, nats m)))
+    (rs : HVector RegFn (sigs.map fun (n, m) => (⟨(fnTys sigs ++ nats n).reverse⟩, nats m)))
     (hrs : RegsMono rs) (i : Nat) (xs : List Nat) :
     funcsFix (fun T => bodies sigs T sigs rs) i xs =
       bodies sigs (funcsFix fun T => bodies sigs T sigs rs) sigs rs i xs :=

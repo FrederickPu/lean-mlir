@@ -181,6 +181,54 @@ def mkExprOf (Γ : Ctxt d.Ty) (parsedOp : d.Op)
       this ▸ .nil
     ⟩⟩
 
+/-! ## Regions -/
+
+/--
+`mkRegions mkRegion regs regSig` translates the regions `regs` into programs of the
+region signature `regSig`, translating each region with `mkRegion`.
+
+Typically `mkRegion` is `mkCom`: the region is then translated on its own, seeing none of
+the enclosing names (as for MLIR's `IsolatedFromAbove` ops), and its context is that of its
+block arguments, read backwards (as for any program, see `mkCom`).
+
+Throws an error if the number of regions differs from the signature, or if a region's
+context or return types differ from those the signature expects.
+-/
+def mkRegions [DecidableEq d.Ty]
+    (mkRegion : Region φ → ExceptM d (Σ Γ eff ty, Com d Γ eff ty)) :
+    (regs : List (Region φ)) → (regSig : RegionSignature d.Ty) →
+      ExceptM d (HVector (fun t : Ctxt d.Ty × List d.Ty => Com d t.1 .impure t.2) regSig)
+  | [], [] => return .nil
+  | r :: rs, (Γ, ty) :: sig => do
+    let ⟨Γ', eff, ty', com⟩ ← mkRegion r
+    let com := com.changeEffect (EffectKind.le_impure eff)
+    if hΓ : Γ' = Γ then
+      if hty : ty' = ty then
+        return .cons (hΓ ▸ hty ▸ com) (← mkRegions mkRegion rs sig)
+      else
+        throw <| .generic s!"Region `{r.name}` returns {ty'}, but its op expects {ty}"
+    else
+      throw <| .generic s!"Region `{r.name}` has arguments {Γ'.toList.reverse}, \
+        but its op expects {Γ.toList.reverse}"
+  | regs, sig =>
+    throw <| .generic s!"Expected {sig.length} region(s), but found {regs.length}"
+
+/--
+`op.mkExprWithRegions Γ parsedOp mkRegion` constructs an `Expr` of the given parsed
+operation, its arguments and its regions; see `mkRegions` for how regions are translated.
+It is `mkExprOf`, for operations which may have regions.
+
+Throws an error if the types of the arguments or the regions don't correspond to the
+signature of the operation.
+-/
+def mkExprWithRegions [DecidableEq d.Ty] (Γ : Ctxt d.Ty) (parsedOp : d.Op)
+    (mkRegion : Region φ → ExceptM d (Σ Γ eff ty, Com d Γ eff ty))
+    (args? : Option (ParsedArgs Γ) := none) :
+    ReaderM d (Σ eff returnTy, Expr d Γ eff returnTy) := do
+  let args ← args?.getDM (op.parseArgs Γ)
+  let regArgs ← mkRegions mkRegion op.regions (DialectSignature.regSig parsedOp)
+  return ⟨_, _, ⟨parsedOp, rfl, EffectKind.le_refl _, ← args.withSignature _, regArgs⟩⟩
+
 end Op
 end MLIR.AST
 

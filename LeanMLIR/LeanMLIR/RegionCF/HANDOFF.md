@@ -11,7 +11,7 @@ Status: everything below builds with no errors, warnings or `sorry`, on branch `
 
 ```sh
 cd LeanMLIR
-timeout 600 lake build LeanMLIR.RegionCF.Loop      # builds every module below
+timeout 600 lake build LeanMLIR.RegionCF.Loop LeanMLIR.RegionCF.MutualRec   # every module below
 timeout 300 lake env lean --memory=4096 --threads=2 SomeScratch.lean
 ```
 
@@ -24,28 +24,70 @@ On a fresh checkout: no Mathlib binary cache exists for this nightly Mathlib rev
 If lake fails with `git exited with code 128` on a package, `git fetch origin <rev>` inside
 `.lake/packages/<pkg>` and check out the pinned revision by hand.
 
+Known failures in this package that predate RegionCF: `LeanMLIR.Dialects.LLVM.*` imports the
+`SSA` package (so `lake build` of the default target fails), and `LeanMLIR/Examples.lean`
+is marked out of date in its own header.
+
 ## Files
 
 | File | What it is |
 |---|---|
 | `Fix.lean` | The fixpoints. `whileLoop` (via `partial_fixpoint`) and `whileLoop_unfold`. `FnTable := Nat → List Nat → Option (List Nat)`. `funcsFix F` is the least fixpoint, defined with `Lean.Order.fix` when `F` is monotone (a classical `if`) and `implemented_by` a `partial def` so programs still run. `funcsFix_unfold (h : monotone F)`. |
-| `Dialect.lean` | The `CF` dialect, with monad `Option`. Types: `nat` and `fn n m` (denoted as `List Nat → Option (List Nat)`). Ops: `cst add sub mul eqz` (pure); `ite ts rs`, `while ts`, `funcs sigs ts rs`, `call n m` (impure). Helpers `toNats`, `ofNats`, `fnVals`, `bodies`. Simp lemmas `denote_*` and `effectKind_*`, one per op. |
+| `Dialect.lean` | The `CF` dialect, with monad `Option`, following LeanMLIR's binder order (see below). Types: `nat` and `fn n m` (denoted as `List Nat → Option (List Nat)`). Ops: `cst add sub mul eqz` (pure); `ite ts rs`, `while ts`, `funcs sigs ts rs`, `call n m` (impure). Helpers `toNats`, `ofNats`, `fnVals`, `bodies`, `rev` (an `HVector` reversed, `rfl`-typed via `revAux`). Simp lemmas `denote_*` and `effectKind_*`, one per op. |
+| `Syntax.lean` | **`[cf| …]`**: programs in MLIR's generic syntax, through LeanMLIR's generic parser, `DialectParse`, `SSA.elabIntoCom'`. Also `[cf_region| …]` (a region on its own, effect `.impure`), `ToExpr`, `DialectToExpr`, and a `DialectPrint` (so `#eval prog` prints it back). |
 | `Simp.lean` | Lookup lemmas for literal variable indices, and the **`cf_reduce`** tactic. |
 | `Mono.lean` | **The general monotonicity theorem**, `funcsFix_bodies_unfold`, and the per-function equation `funcsFix_apply` with simp lemmas `bodies_zero`/`bodies_succ`, `ofNats_*`, `toNats_*`, `fnVals_*`. |
-| `MutualRec.lean` | Worked example: `funcs { f; g } in f(n)`, proved equal to a Lean `mutual` definition. |
-| `Loop.lean` | Worked example: Fibonacci as a `while` whose body is an `ite` (continue, or break with flag `0`), proved equal to a Lean `fib`. |
+| `MutualRec.lean` | Worked example, written in `[cf| …]`: `funcs { f; g } in f(n)`, proved equal to a Lean `mutual` definition. |
+| `Loop.lean` | Worked example, written in `[cf| …]`: Fibonacci as a `while` whose body is an `ite` (continue, or break with flag `0`), proved equal to a Lean `fib`. |
+
+Shared code added or fixed for this (outside `RegionCF/`):
+- `MLIRSyntax/Transform/Utils.lean`: `Op.mkRegions` and `Op.mkExprWithRegions`, the generic
+  parsing of an op's regions (each by a given translator, usually `mkCom`, so regions are
+  isolated from above). Before, `mkExprOf` panicked on ops with regions.
+- `Framework/ToExpr.lean`: `Prod.foldToExpr` built `Prod α β a b` (the type, at universe 1)
+  instead of `Prod.mk a b`, so no parsed program with a region op could be turned into a term.
+
+## Syntax
+
+```
+def bodyAst : MLIR.AST.Region 0 := [mlir_region| { ^bb0(%n : !nat, …): … }]
+def body := [cf_region| $(bodyAst)]          -- the region, to state lemmas about
+def prog := [cf| {
+  ^bb0(%n : !nat):
+    %c0 = "cf.cst"() {value = 0} : () -> (!nat)
+    %n', %a, %b = "cf.while"(%n, %c0, %c1) ($(bodyAst)) : (!nat, !nat, !nat) -> (!nat, !nat, !nat)
+    "return"(%a) : (!nat) -> ()
+}]
+```
+
+- Types `!nat`, `!fn_n_m`. Ops `"cf.cst"` (attribute `value`), `"cf.add"`/`sub`/`mul`/`eqz`,
+  `"cf.ite"`, `"cf.while"`, `"cf.funcs"`, `"cf.call"`; `"return"` ends a region.
+- Op parameters are inferred: `ts` from operand types, `rs` from result types, a `funcs`
+  group's signatures from the `!fn_n_m` types of its main region's first block arguments,
+  `call n m` from its function operand's type.
+- Regions see only their block arguments (an outer name is an `Undeclared name` error).
+- Splicing a region (`$(bodyAst)`) is how to name a body for lemmas: `body` is then
+  syntactically the region inside `prog`, up to unfolding `body` (so use `erw`).
 
 ## Semantics of the region ops
 
+**Binder order.** LeanMLIR's parser and printer read a list of binders backwards: a region
+`^bb(%x₀, …, %xₖ)` has context `[xₖ, …, x₀]`, and results `%r₀, …, %rₖ = op` are bound to
+the op's results `[rₖ, …, r₀]` (that is how `mkComHelper` and `Expr.printResultList` work,
+for every dialect). Operands and `return` are in order. So that every binder means the
+operand or result at its position, the CF region ops pass their operands to a region
+reversed (`Valuation.ofHVector (rev xs)`, region context `⟨ts.reverse⟩`) and return results
+reversed (`.map rev`, result types `rs.reverse`). Hand-written programs must follow this too.
+
 - **`ite ts rs`**: the first argument is the condition (nonzero means true), and the other
-  arguments `ts` go to whichever branch runs. Each branch region is `(⟨ts⟩, rs)`.
-- **`while ts`**: the body region is `(⟨ts⟩, .nat :: ts)` and returns a flag followed by the
+  arguments `ts` go to whichever branch runs. Each branch region is `(⟨ts.reverse⟩, rs)`.
+- **`while ts`**: the body region is `(⟨ts.reverse⟩, .nat :: ts)` and returns a flag followed by the
   new state. A flag of `0` stops the loop (break). Regions capture nothing, so anything the
   body needs, including functions, must be passed in the state.
-- **`funcs sigs ts rs`**: the regions are the main region `(⟨fnTys sigs ++ ts⟩, rs)` followed
-  by one body per signature `(n, m)`, of shape `(⟨fnTys sigs ++ nats n⟩, nats m)`. Every
-  region sees every function of the group as a value. The denotation is
-  `main (fnVals (funcsFix fun T => bodies sigs T sigs regs) ++ xs)`.
+- **`funcs sigs ts rs`**: the regions are the main region `(⟨(fnTys sigs ++ ts).reverse⟩, rs)`
+  followed by one body per signature `(n, m)`, of shape `(⟨(fnTys sigs ++ nats n).reverse⟩,
+  nats m)`. Every region sees every function of the group as a value. The denotation is
+  `(main (rev (fnVals (funcsFix fun T => bodies sigs T sigs regs) ++ xs))).map rev`.
 - **`call n m`**: applies a function value to `n` numbers. A wrong number of results gives
   `none`.
 
@@ -70,12 +112,13 @@ If lake fails with `git exited with code 128` on a package, `git fetch origin <r
   `T i xs = (ofNats n xs).bind fun ys => (bodyᵢ (fnVals T sigs ++ ys)).map toNats`.
 - **`F'_eq`** (`MutualRec.lean`): `F' n = some (f n)`. The proof pattern:
   1. `fBody_denote` / `gBody_denote`: each body run on its arguments equals its equation.
-     These use `cf_reduce`, then `simp only [Option.bind_assoc, …]`, then a case split on
-     `ofNats 1 r`.
+     These use `cf_reduce`, `simp only [Option.bind_assoc, …]`, `cf_reduce`, then
+     `simp only [Option.bind_map, Option.map_bind, …]` (to push the results' `.map rev`
+     through), then a case split on `ofNats 1 r`.
   2. `T_f` / `T_g`: the fixpoint at index `i` on `[n]` runs body `i`, one line each:
      `(funcsFix_apply _ _ hFb i [n]).trans rfl`, where `hFb := HVector.denote_mono bodyRegs`.
   3. `table`: induction on `n`.
-  4. `F'_eq`: `cf_reduce` reduces `prog`, then rewrite with `table`.
+  4. `F'_eq`: `cf_reduce` reduces `prog`, then `erw` with `table`.
 - **`Fib'_eq`** (`Loop.lean`): `Fib' n = some (fib n)`. The proof pattern:
   1. `step_eq`: the body as a step function (`step`), one case per branch, each by `rfl`.
   2. `loop`: induction on `n` with `whileLoop_unfold` and `step_eq`; the loop ends in state
@@ -118,6 +161,12 @@ Pitfalls found along the way:
   recursive calls before `subst heff`, and use `toOpt` for the result type.
 
 ## Remaining work
+
+0. **Syntax polish.** Only MLIR's generic op syntax (`"cf.add"(%a, %b) : (…) -> (…)`) is
+   supported; a custom pretty syntax (as for LLVM's `llvm.add %a, %b : i64`) would be shorter.
+   Constants need `{value = k}`. The framework's reversed result binding also means a
+   multi-result op whose result types differ would not typecheck in syntax unless the
+   dialect reverses its results, as CF does.
 
 1. **Nested loops.** `Loop.lean` has a single loop. Not yet tried: a loop nested in a loop,
    a loop inside a `funcs` body, or a `call` inside a loop body (functions must be threaded

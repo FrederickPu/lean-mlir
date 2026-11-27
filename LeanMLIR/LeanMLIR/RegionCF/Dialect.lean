@@ -18,6 +18,15 @@ Structured control flow inside LeanMLIR's SSA, with no other IR:
 
 The dialect's monad is `Option`: a loop or a recursion that does not stop has no value.
 Values are numbers and functions (`⟦fn n m⟧ = List Nat → Option (List Nat)`).
+
+## Argument order
+
+The dialect follows LeanMLIR's binder convention (that of its parser and printer): a list of
+binders is a context read backwards. A region `^bb(%x₀, …, %xₖ)` has context `[xₖ, …, x₀]`,
+and the results `%r₀, …, %rₖ = op …` are the op's results `[rₖ, …, r₀]`. So that each
+binder means the operand or result at its position, a region op passes its operands to its
+regions reversed (`rev`), and returns its regions' results reversed: a region's context is
+`⟨ts.reverse⟩`, an op's results `rs.reverse`. Operands and `return` are in order.
 -/
 
 open Ctxt (Var Valuation)
@@ -41,6 +50,16 @@ def fnTys (sigs : List (Nat × Nat)) : List Ty := sigs.map fun (n, m) => .fn n m
 /-- `n` numbers. -/
 abbrev nats (n : Nat) : List Ty := List.replicate n .nat
 
+/-- Reverse a vector onto another (as `List.reverseAux`, so the types agree by `rfl`). -/
+def revAux {α : Type} {A : α → Type} : {as bs : List α} → HVector A as → HVector A bs →
+    HVector A (as.reverseAux bs)
+  | [], _, .nil, acc => acc
+  | a :: as, bs, .cons x xs, acc => revAux (as := as) (bs := a :: bs) xs (.cons x acc)
+
+/-- Reverse a vector. -/
+def rev {α : Type} {A : α → Type} {as : List α} (xs : HVector A as) : HVector A as.reverse :=
+  revAux xs .nil
+
 inductive Op
   | cst (k : Nat)
   | add | sub | mul
@@ -50,7 +69,7 @@ inductive Op
   | while (ts : List Ty)
   | funcs (sigs : List (Nat × Nat)) (ts rs : List Ty)
   | call (n m : Nat)
-  deriving Repr
+  deriving Repr, DecidableEq
 
 abbrev CF : Dialect where
   Op := Op
@@ -61,12 +80,13 @@ instance : DialectSignature CF where
   signature
     | .cst _ => ⟨[], [], [.nat], .pure⟩
     | .eqz => ⟨[.nat], [], [.nat], .pure⟩
-    | .ite ts rs => ⟨.nat :: ts, [(⟨ts⟩, rs), (⟨ts⟩, rs)], rs, .impure⟩
-    | .while ts => ⟨ts, [(⟨ts⟩, .nat :: ts)], ts, .impure⟩
+    | .ite ts rs => ⟨.nat :: ts, [(⟨ts.reverse⟩, rs), (⟨ts.reverse⟩, rs)], rs.reverse, .impure⟩
+    | .while ts => ⟨ts, [(⟨ts.reverse⟩, .nat :: ts)], ts.reverse, .impure⟩
     | .funcs sigs ts rs =>
-      ⟨ts, (⟨fnTys sigs ++ ts⟩, rs) :: sigs.map (fun (n, m) => (⟨fnTys sigs ++ nats n⟩, nats m)),
-        rs, .impure⟩
-    | .call n m => ⟨.fn n m :: nats n, [], nats m, .impure⟩
+      ⟨ts, (⟨(fnTys sigs ++ ts).reverse⟩, rs) ::
+          sigs.map (fun (n, m) => (⟨(fnTys sigs ++ nats n).reverse⟩, nats m)),
+        rs.reverse, .impure⟩
+    | .call n m => ⟨.fn n m :: nats n, [], (nats m).reverse, .impure⟩
     | _ => ⟨[.nat, .nat], [], [.nat], .pure⟩
 
 
@@ -106,12 +126,12 @@ abbrev RegFn (t : Ctxt Ty × List Ty) := t.1.Valuation → Option (HVector toTyp
 /-- The bodies of a group, as a table transformer: function `i` runs region `i` on the
 functions of `T` and its arguments. -/
 def bodies (sigs₀ : List (Nat × Nat)) (T : FnTable) : (sigs : List (Nat × Nat)) →
-    HVector RegFn (sigs.map fun (n, m) => (⟨fnTys sigs₀ ++ nats n⟩, nats m)) → FnTable
+    HVector RegFn (sigs.map fun (n, m) => (⟨(fnTys sigs₀ ++ nats n).reverse⟩, nats m)) → FnTable
   | [], .nil => fun _ _ => none
   | (n, _) :: sigs, .cons r rs => fun i xs =>
     if i = 0 then
       (ofNats n xs).bind fun ys =>
-        (r (Valuation.ofHVector (fnVals T sigs₀ ++ ys))).map toNats
+        (r (Valuation.ofHVector (rev (fnVals T sigs₀ ++ ys)))).map toNats
     else bodies sigs₀ T sigs rs (i - 1) xs
 
 instance : DialectDenote CF where
@@ -123,12 +143,15 @@ instance : DialectDenote CF where
     | .eqz, .cons (a : Nat) .nil, _ =>
       (.cons (if a = 0 then 1 else 0 : Nat) .nil : HVector toType [Ty.nat])
     | .ite _ _, .cons (c : Nat) xs, .cons thn (.cons els .nil) =>
-      if c ≠ 0 then thn (Valuation.ofHVector xs) else els (Valuation.ofHVector xs)
+      (if c ≠ 0 then thn (Valuation.ofHVector (rev xs)) else els (Valuation.ofHVector (rev xs))).map rev
     | .while _, xs, .cons body .nil =>
-      whileLoop (fun st => (body (Valuation.ofHVector st)).map fun r => (r.head, r.tail)) xs
+      (whileLoop (fun st => (body (Valuation.ofHVector (rev st))).map fun r => (r.head, r.tail))
+        xs).map rev
     | .funcs sigs _ _, xs, .cons main rs =>
-      main (Valuation.ofHVector (fnVals (funcsFix fun T => bodies sigs T sigs rs) sigs ++ xs))
-    | .call _ m, .cons (f : List Nat → Option (List Nat)) xs, _ => (f (toNats xs)).bind (ofNats m)
+      (main (Valuation.ofHVector
+        (rev (fnVals (funcsFix fun T => bodies sigs T sigs rs) sigs ++ xs)))).map rev
+    | .call _ m, .cons (f : List Nat → Option (List Nat)) xs, _ =>
+      ((f (toNats xs)).bind (ofNats m)).map rev
 
 /-! ## The semantics of each op, as `simp` lemmas
 
@@ -157,20 +180,21 @@ local notation "Regs" op => HVector RegFn (DialectSignature.regSig (d := CF) op)
 @[simp] theorem denote_ite (ts rs : List Ty) (c : Nat) (xs : HVector toType ts) (thn els) :
     DialectDenote.denote (d := CF) (.ite ts rs) (no_index (.cons c xs : Args (.ite ts rs)))
       (no_index (.cons thn (.cons els .nil) : Regs (.ite ts rs))) =
-      if c ≠ 0 then thn (Valuation.ofHVector xs) else els (Valuation.ofHVector xs) := rfl
+      (if c ≠ 0 then thn (Valuation.ofHVector (rev xs))
+        else els (Valuation.ofHVector (rev xs))).map rev := rfl
 @[simp] theorem denote_while (ts : List Ty) (xs : Args (.while ts)) (body) :
     DialectDenote.denote (d := CF) (.while ts) (no_index xs) (no_index (.cons body .nil : Regs (.while ts))) =
-      whileLoop (fun st => (body (Valuation.ofHVector st)).map fun r => (r.head, r.tail))
-        (xs : HVector toType ts) := rfl
+      (whileLoop (fun st => (body (Valuation.ofHVector (rev st))).map fun r => (r.head, r.tail))
+        (xs : HVector toType ts)).map rev := rfl
 @[simp] theorem denote_funcs (sigs : List (Nat × Nat)) (ts rs : List Ty) (xs : Args (.funcs sigs ts rs))
     (main regs) :
     DialectDenote.denote (d := CF) (.funcs sigs ts rs) (no_index xs) (no_index (.cons main regs : Regs (.funcs sigs ts rs))) =
-      main (Valuation.ofHVector (fnVals (funcsFix fun T => bodies sigs T sigs regs) sigs ++
-        (xs : HVector toType ts))) := rfl
+      (main (Valuation.ofHVector (rev (fnVals (funcsFix fun T => bodies sigs T sigs regs) sigs ++
+        (xs : HVector toType ts))))).map rev := rfl
 @[simp] theorem denote_call (n m : Nat) (fv : List Nat → Option (List Nat)) (xs : HVector toType (nats n))
     (r : Regs (.call n m)) :
     DialectDenote.denote (d := CF) (.call n m) (no_index (.cons fv xs : Args (.call n m))) r =
-      (fv (toNats xs)).bind (ofNats m) := rfl
+      ((fv (toNats xs)).bind (ofNats m)).map rev := rfl
 
 end Denote
 

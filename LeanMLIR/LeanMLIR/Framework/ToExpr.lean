@@ -63,7 +63,7 @@ protected def List.foldToExpr {α : Q(Type)} : List Q($α) → Q(List $α) :=
   List.foldr (fun a as => q($a :: $as)) q([])
 /-- Obtain an Lean expression of a product, from a product of Lean expressions. -/
 protected def Prod.foldToExpr {α β : Q(Type)} : Q($α) × Q($β) → Q($α × $β) :=
-  Function.uncurry <| mkApp4 (.const ``Prod [1,1]) α β
+  fun (a, b) => q(($a, $b))
 
 namespace DialectMetaMorphism
 
@@ -143,9 +143,10 @@ partial def Regions.toExprAux {regSig : RegionSignature d.Ty}
   | [], .nil =>
     mkApp2 (.const ``HVector.nil [0,0]) α A
   | a::as, .cons x xs =>
-    let pToExpr (a) := Prod.foldToExpr <| a.map f.mapCtxt f.mapList
+    let pToExpr (a) := Prod.foldToExpr (α := q(Ctxt ($dE).Ty)) (β := q(List ($dE).Ty)) <|
+      a.map f.mapCtxt f.mapList
     let a := pToExpr a
-    let as := (as.map pToExpr).foldToExpr
+    let as := List.foldToExpr (α := α) (as.map pToExpr)
 
     let x := x.toExprAux
     let xs := Regions.toExprAux xs

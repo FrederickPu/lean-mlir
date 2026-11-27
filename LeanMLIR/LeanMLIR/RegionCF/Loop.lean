@@ -1,7 +1,9 @@
 /-
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
-import LeanMLIR.RegionCF.MutualRec
+import LeanMLIR.RegionCF.Mono
+import LeanMLIR.RegionCF.Simp
+import LeanMLIR.RegionCF.Syntax
 
 /-!
 # A loop, as a region op
@@ -23,31 +25,37 @@ open TyDenote (toType)
 
 namespace RegionCF.Loop
 
-open MutualRec (Com E v N)
+open MLIR.AST (Region)
+
+abbrev N := Ty.nat
 
 /-- The loop body, on the state `(n, a, b)`: a flag (`0`: break) and the new state. -/
-def body : Com ⟨[N, N, N]⟩ [N, N, N, N] :=
-  .var (E (.ite [N, N, N] [N, N, N, N]) (.cons (v 0) (.cons (v 0) (.cons (v 1) (.cons (v 2) .nil))))
-    (.cons
-      -- n ≠ 0: continue with (n - 1, b, a + b)
-      (.var (E (.cst 1) .nil) <|                                      -- one, n, a, b
-       .var (E .sub (.cons (v 1) (.cons (v 0) .nil))) <|              -- m, one, n, a, b
-       .var (E .add (.cons (v 3) (.cons (v 4) .nil))) <|              -- s, m, one, n, a, b
-       .rets (.cons (v 2) (.cons (v 1) (.cons (v 5) (.cons (v 0) .nil)))))
-      (.cons
-        -- n = 0: break
-        (.var (E (.cst 0) .nil) <|                                    -- zero, n, a, b
-         .rets (.cons (v 0) (.cons (v 1) (.cons (v 2) (.cons (v 3) .nil)))))
-        .nil))) <|
-  .rets (.cons (v 0) (.cons (v 1) (.cons (v 2) (.cons (v 3) .nil))))
+def bodyAst : Region 0 := [mlir_region| {
+  ^bb0(%n : !nat, %a : !nat, %b : !nat):
+    %f, %n', %a', %b' = "cf.ite"(%n, %n, %a, %b) ({
+      ^bb0(%n : !nat, %a : !nat, %b : !nat):
+        %one = "cf.cst"() {value = 1} : () -> (!nat)
+        %m = "cf.sub"(%n, %one) : (!nat, !nat) -> (!nat)
+        %s = "cf.add"(%a, %b) : (!nat, !nat) -> (!nat)
+        "return"(%one, %m, %b, %s) : (!nat, !nat, !nat, !nat) -> ()
+    }, {
+      ^bb0(%n : !nat, %a : !nat, %b : !nat):
+        %zero = "cf.cst"() {value = 0} : () -> (!nat)
+        "return"(%zero, %n, %a, %b) : (!nat, !nat, !nat, !nat) -> ()
+    }) : (!nat, !nat, !nat, !nat) -> (!nat, !nat, !nat, !nat)
+    "return"(%f, %n', %a', %b') : (!nat, !nat, !nat, !nat) -> ()
+}]
+
+def body := [cf_region| $(bodyAst)]
 
 /-- `(n, a, b) := (n, 0, 1); while body; return a` -/
-def prog : Com ⟨[N]⟩ [N] :=
-  .var (E (.cst 0) .nil) <|                                           -- c0, n
-  .var (E (.cst 1) .nil) <|                                           -- c1, c0, n
-  .var (E (.while [N, N, N]) (.cons (v 2) (.cons (v 1) (.cons (v 0) .nil)))
-    (.cons body .nil)) <|                                             -- n', a, b, c1, c0, n
-  .rets (.cons (v 1) .nil)
+def prog := [cf| {
+  ^bb0(%n : !nat):
+    %c0 = "cf.cst"() {value = 0} : () -> (!nat)
+    %c1 = "cf.cst"() {value = 1} : () -> (!nat)
+    %n', %a, %b = "cf.while"(%n, %c0, %c1) ($(bodyAst)) : (!nat, !nat, !nat) -> (!nat, !nat, !nat)
+    "return"(%a) : (!nat) -> ()
+}]
 
 /-! ## The specification -/
 
@@ -69,7 +77,7 @@ induction on `n`, is `n` steps. -/
 
 /-- The loop's step function, as `denote` gives it to `whileLoop`. -/
 abbrev step (st : HVector toType [N, N, N]) : Option (Nat × HVector toType [N, N, N]) :=
-  (body.denote (Valuation.ofHVector st)).map fun r => (r.head, r.tail)
+  (body.denote (Valuation.ofHVector (rev st))).map fun r => (r.head, r.tail)
 
 theorem step_eq (n a b : Nat) :
     step ((n : Nat) ::ₕ (a : Nat) ::ₕ (b : Nat) ::ₕ .nil) =
