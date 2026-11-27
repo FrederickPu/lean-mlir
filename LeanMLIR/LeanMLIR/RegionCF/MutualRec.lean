@@ -151,32 +151,27 @@ theorem gBody_denote (fv gv : List Nat → Option (List Nat)) (n : Nat) :
 abbrev Fb : FnTable → FnTable := fun T =>
   bodies [(1, 1), (1, 1)] T [(1, 1), (1, 1)] (Com.denote fBody ::ₕ Com.denote gBody ::ₕ .nil)
 
-theorem Fb_f (T : FnTable) (n : Nat) :
-    Fb T 0 [n] = Option.map (toNats (n := 1))
-      (fBody.denote (Valuation.ofHVector (T 0 ::ₕ T 1 ::ₕ (n : Nat) ::ₕ .nil))) := by
-  simp only [Fb, bodies, ofNats, fnVals, ↓reduceIte, Option.map_some, Option.bind_some]
-  congr 3
-theorem Fb_g (T : FnTable) (n : Nat) :
-    Fb T 1 [n] = Option.map (toNats (n := 1))
-      (gBody.denote (Valuation.ofHVector (T 0 ::ₕ T 1 ::ₕ (n : Nat) ::ₕ .nil))) := by
-  simp only [Fb, bodies, ofNats, fnVals, ↓reduceIte, Option.map_some, Option.bind_some]
-  congr 3
-
-/-- The group is monotone: true of every program (`bodies_monotone`, `Com.denote_mono`). -/
-theorem Fb_monotone : monotone Fb :=
-  bodies_monotone _ _ _ (.cons (Com.denote_mono fBody rfl) (.cons (Com.denote_mono gBody rfl) .nil))
-
 /-- The functions of the program. -/
 noncomputable abbrev T : FnTable := funcsFix Fb
 
+/-- The bodies, as the `funcs` op's regions. -/
+def bodyRegs : HVector (fun t : Ctxt Ty × List Ty => _root_.Com CF t.1 .impure t.2)
+    ([(1, 1), (1, 1)].map fun (n, m) => (⟨fnTys [(1, 1), (1, 1)] ++ nats n⟩, nats m)) :=
+  .cons fBody (.cons gBody .nil)
+
+/-- The bodies are monotone: true of every program (`Com.denote_mono`). -/
+theorem hFb : RegsMono (HVector.denote (d := CF) bodyRegs) := HVector.denote_mono bodyRegs
+
+/-- Each function's equation: `funcsFix_apply`, for any group, with monotonicity from the
+general theorem (`HVector.denote_mono`); the rest is computation. -/
 theorem T_f (n : Nat) :
     T 0 [n] = Option.map (toNats (n := 1))
-      (fBody.denote (Valuation.ofHVector (T 0 ::ₕ T 1 ::ₕ (n : Nat) ::ₕ .nil))) := by
-  rw [← Fb_f]; exact congrFun (congrFun (funcsFix_unfold Fb_monotone) 0) [n]
+      (fBody.denote (Valuation.ofHVector (T 0 ::ₕ T 1 ::ₕ (n : Nat) ::ₕ .nil))) :=
+  (funcsFix_apply _ _ hFb 0 [n]).trans rfl
 theorem T_g (n : Nat) :
     T 1 [n] = Option.map (toNats (n := 1))
-      (gBody.denote (Valuation.ofHVector (T 0 ::ₕ T 1 ::ₕ (n : Nat) ::ₕ .nil))) := by
-  rw [← Fb_g]; exact congrFun (congrFun (funcsFix_unfold Fb_monotone) 1) [n]
+      (gBody.denote (Valuation.ofHVector (T 0 ::ₕ T 1 ::ₕ (n : Nat) ::ₕ .nil))) :=
+  (funcsFix_apply _ _ hFb 1 [n]).trans rfl
 
 theorem table : (n : Nat) → T 0 [n] = some [f n] ∧ T 1 [n] = some [g n]
   | 0 => by rw [T_f, T_g, fBody_denote, gBody_denote]; simp [f, g]; exact ⟨rfl, rfl⟩

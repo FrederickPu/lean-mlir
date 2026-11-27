@@ -286,4 +286,44 @@ theorem funcsFix_bodies_unfold (sigs : List (Nat × Nat))
       bodies sigs (funcsFix fun T => bodies sigs T sigs (HVector.denote (d := CF) regs)) sigs (HVector.denote (d := CF) regs) :=
   funcsFix_unfold (bodies_monotone sigs sigs _ (HVector.denote_mono regs))
 
+/-! ## Each function's equation
+
+`funcsFix_apply` unfolds the table once at any index; `bodies_zero`/`bodies_succ` then pick
+out that function's body. Together, for any group and any `i` with body `rᵢ` taking `n`
+numbers: `T i xs = (ofNats n xs).bind fun ys => (rᵢ (fnVals T sigs ++ ys)).map toNats`. -/
+
+@[simp] theorem bodies_zero (sigs₀ : List (Nat × Nat)) (T : FnTable) (n m : Nat)
+    (sigs : List (Nat × Nat)) (r : RegFn (⟨fnTys sigs₀ ++ nats n⟩, nats m))
+    (rs : HVector RegFn (sigs.map fun (n, m) => (⟨fnTys sigs₀ ++ nats n⟩, nats m)))
+    (xs : List Nat) :
+    bodies sigs₀ T ((n, m) :: sigs) (.cons r rs) 0 xs =
+      (ofNats n xs).bind fun ys => (r (Valuation.ofHVector (fnVals T sigs₀ ++ ys))).map toNats :=
+  rfl
+
+@[simp] theorem bodies_succ (sigs₀ : List (Nat × Nat)) (T : FnTable) (n m : Nat)
+    (sigs : List (Nat × Nat)) (r : RegFn (⟨fnTys sigs₀ ++ nats n⟩, nats m))
+    (rs : HVector RegFn (sigs.map fun (n, m) => (⟨fnTys sigs₀ ++ nats n⟩, nats m)))
+    (i : Nat) (xs : List Nat) :
+    bodies sigs₀ T ((n, m) :: sigs) (.cons r rs) (i + 1) xs = bodies sigs₀ T sigs rs i xs := by
+  simp [bodies]
+
+@[simp] theorem ofNats_zero : ofNats 0 [] = some .nil := rfl
+@[simp] theorem ofNats_succ (n x : Nat) (xs : List Nat) :
+    ofNats (n + 1) (x :: xs) = (ofNats n xs).map (.cons (x : Nat)) := rfl
+@[simp] theorem toNats_nil : toNats (n := 0) .nil = [] := rfl
+@[simp] theorem toNats_cons (n x : Nat) (xs : HVector toType (nats n)) :
+    toNats (n := n + 1) (.cons (x : Nat) xs) = x :: toNats xs := rfl
+@[simp] theorem fnVals_nil (T : FnTable) (i : Nat) : fnVals T [] i = .nil := rfl
+@[simp] theorem fnVals_cons (T : FnTable) (s : Nat × Nat) (sigs : List (Nat × Nat)) (i : Nat) :
+    fnVals T (s :: sigs) i = .cons (T i) (fnVals T sigs (i + 1)) := rfl
+
+/-- **One function of a group, unfolded once**: for monotone bodies (every program's are,
+`HVector.denote_mono`), the table at `i` is body `i` calling the table. -/
+theorem funcsFix_apply (sigs : List (Nat × Nat))
+    (rs : HVector RegFn (sigs.map fun (n, m) => (⟨fnTys sigs ++ nats n⟩, nats m)))
+    (hrs : RegsMono rs) (i : Nat) (xs : List Nat) :
+    funcsFix (fun T => bodies sigs T sigs rs) i xs =
+      bodies sigs (funcsFix fun T => bodies sigs T sigs rs) sigs rs i xs :=
+  congrFun (congrFun (funcsFix_unfold (bodies_monotone sigs sigs rs hrs)) i) xs
+
 end RegionCF
